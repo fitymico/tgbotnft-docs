@@ -1,3 +1,4 @@
+import asyncio
 from telethon import TelegramClient
 
 api_id = 37178559
@@ -8,10 +9,15 @@ client = TelegramClient('nft_session', api_id, api_hash)
 async def main():
 
     # You can send messages to yourself...
-    await client.send_message('me', 'Hello, myself!')
+    await client.send_message('me', '✅ Telethon бот запущен и работает!')
 
-    # Or send files, songs, documents, albums...
-    #await client.send_file('me', '/home/me/Pictures/holidays.jpg')
+    while True:
+        try:
+            await client.send_message('me', '⏰ Бот всё ещё активен...')
+        except Exception as e:
+            print(f"Ошибка при отправке: {e}")
+
+        await asyncio.sleep(20)
 
 
 with client:
