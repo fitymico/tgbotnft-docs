@@ -52,7 +52,11 @@ function saveStatus(status: aiogramBotStatus): void {
     }
 }
 
-const result = loadStatus();
-saveStatus(result);
+// const result = loadStatus();
+// saveStatus(result);
 
-console.log("Axios OK:", typeof axios === "function");
+// console.log("Axios OK:", typeof axios === "function");
+
+import { Api } from "telegram";
+
+console.log(Object.keys(Api.payments));

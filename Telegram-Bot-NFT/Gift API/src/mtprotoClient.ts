@@ -31,4 +31,26 @@ export async function saveSession(): Promise<void> {
     const NEWSESSION = STRINGSESSION.save();
     fs.writeFileSync(SESSIONFILE, NEWSESSION, 'utf8');
     console.log("Текущая сессия сохранена в ", SESSIONFILE);
+    return;
+}
+
+export async function loginFlow() {
+    await client.start({
+        phoneNumber: async () => {
+            process.stdout.write("Введите номер телефона (+7...): ");
+            return new Promise<string>(resolve => process.stdin.once("data", d => resolve(d.toString().trim())));
+        },
+        phoneCode: async () => {
+            process.stdout.write("Введите код из Telegram: ");
+            return new Promise<string>(resolve => process.stdin.once("data", d => resolve(d.toString().trim())));
+        },
+        password: async () => {
+            process.stdout.write("Если включен 2FA, введите пароль (или Enter): ");
+            return new Promise<string>(resolve => process.stdin.once("data", d => resolve(d.toString().trim())));
+        },
+        onError: (err) => console.error("Ошибка в loginFlow:", err)
+    });
+
+    console.log("Логин выполнен");
+    await saveSession();
 }
