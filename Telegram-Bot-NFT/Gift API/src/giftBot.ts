@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import axios from "axios";
 import * as dotenv from 'dotenv';
+import { loginFlow, saveSession } from './mtprotoClient';
 dotenv.config();
 
 interface aiogramBotStatus {
@@ -52,11 +53,4 @@ function saveStatus(status: aiogramBotStatus): void {
     }
 }
 
-// const result = loadStatus();
-// saveStatus(result);
-
-// console.log("Axios OK:", typeof axios === "function");
-
-import { Api } from "telegram";
-
-console.log(Object.keys(Api.payments));
+loginFlow();
