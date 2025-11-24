@@ -7,9 +7,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import axios from "axios";
 import * as dotenv from 'dotenv';
-import { loginFlow, saveSession } from './mtprotoClient.js';
+import { loginFlow, saveSession, client } from './mtprotoClient.js';
+import { getStarGifts, checkCanSendGift, payStarGift, } from './processWrap.js';
 dotenv.config();
 
 interface aiogramBotStatus {
@@ -53,3 +53,36 @@ function saveStatus(status: aiogramBotStatus): void {
     }
 }
 
+async function processFullCycle(): Promise<void> {
+    console.log("Запуск процесса...");
+    await client.connect();
+    console.log("client.connect() выполнен");
+    console.log("Выполнение цикла закупки подарков...");
+
+    const seen = new Set<string>();
+    const OK_CONSTR = 0x374fa7ad;   // checkCanSendGiftResultOk
+    const FAIL_CONSTR = 0xd5e58274; // checkCanSendGiftResultFail
+
+    const res = await getStarGifts();
+    const gifts = res?.gifts ?? (Array.isArray(res) ? res : null);
+
+    if (!gifts) {
+        console.log("Не нашёл поле gifts. Посмотри структуру выше ↑");
+        return;
+    }
+
+    console.log("\nНайденные подарки:");
+    for (const g of gifts) {
+        console.log("-----------------------------");
+        console.log("ID:", g.id);
+
+    }
+
+}
+
+processFullCycle();
+
+// Понять , почему на самом верху вывода показываются ненужные объекты TL
+// Добавить alt - эмодзи, который показывает подарок ( мб придется использовать getGiftReadableName() )
+// Добавить определение подарков (можно купить или уже нет, может это базовые подарки телеграма)
+// Сделать сортировку по ID (можно сделать список: 'эмодзи': {а тут все id для этого эмодзи} )

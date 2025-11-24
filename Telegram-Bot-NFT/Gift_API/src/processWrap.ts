@@ -1,5 +1,5 @@
 import { Api } from "telegram";
-import { client } from "./mtprotoClient";
+import { client } from "./mtprotoClient.js";
 import bigInt from "big-integer";
 
 export class CheckCanSendGift {
