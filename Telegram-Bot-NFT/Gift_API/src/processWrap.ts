@@ -1,21 +1,52 @@
-import { Api } from "telegram";
+import { Api, TelegramClient } from "telegram";
 import { client } from "./mtprotoClient.js";
 import bigInt from "big-integer";
 
-export class CheckCanSendGift {
-    CONSTRUCTOR_ID = 0xc0c4edc9;
-    constructor(public gift_id: bigint) {}
+// const BaseType = Api.payments.StarGift || Api.TypeObject || Object;
 
-    serializeBody(writer: any) {
-        console.log("[DEBUG] serializeBody called, gift_id =", String(this.gift_id));
-        writer.writeLong(this.gift_id);
-    }
+// export class CheckCanSendGiftResultOk extends BaseType {
+//     static CONSTRUCTOR_ID = 0x374fa7ad;
+//     static SUBCLASS_OF_ID = 0x5d20f1a2;
+//     static className = "payments.CheckCanSendGiftResultOk";
+    
+//     constructor() {
+//         super({});
+//     }
+// }
 
-    deserializeResponse(reader: any) {
-        console.log("[DEBUG] deserializeResponse called");
-        return reader.readObject();
-    }
-}
+// export class CheckCanSendGiftResultFail extends BaseType {
+//     static CONSTRUCTOR_ID = 0xd5e58274;
+//     static SUBCLASS_OF_ID = 0x5d20f1a2;
+//     static className = "payments.CheckCanSendGiftResultFail";
+    
+//     constructor(public reason: any) {
+//         super({ reason });
+//     }
+// }
+
+// export type CheckCanSendGiftResult = CheckCanSendGiftResultOk | CheckCanSendGiftResultFail;
+
+// export class CheckCanSendGift extends Api.Request<{
+//     gift_id: bigint;
+// }, CheckCanSendGiftResult> {
+//     static CONSTRUCTOR_ID = 0xc0c4edc9;
+//     static SUBCLASS_OF_ID = 0x5d20f1a2;
+//     className = "payments.CheckCanSendGift";
+//     constructor(public gift_id: bigint) {
+//         super({gift_id});
+//         this.gift_id = gift_id;
+//     }
+
+//     serializeBody(writer: any) {
+//         console.log("[DEBUG] serializeBody called, giftId =", String(this.gift_id));
+//         writer.writeLong(this.gift_id);
+//     }
+
+//     deserializeResponse(reader: any) {
+//         console.log("[DEBUG] deserializeResponse called");
+//         return reader.readObject();
+//     }
+// }
 
 async function sleep(ms: number) {
     return new Promise((res) => setTimeout(res, ms));
@@ -57,11 +88,11 @@ export async function getStarGifts(): Promise<any> {
     });    
 }
 
-export async function checkCanSendGift(giftId: number | string | bigint): Promise<any> {
-    const id = typeof giftId === "bigint" ? giftId : BigInt(giftId);
-    const req = new CheckCanSendGift(id);
-    return await client.invoke(req as any);
-}
+// export async function checkCanSendGift(giftId: number | string | bigint): Promise<any> {
+//     const id = typeof giftId === "bigint" ? giftId : BigInt(giftId);
+//     const req = new CheckCanSendGift(id);
+//     return await client.invoke(req as any);
+// }
 
 //==================================================== ОПЛАТА ПОДАРКА ====================================================
 
@@ -69,7 +100,7 @@ export async function payStarGift(
     giftId: bigint,
     peer: Api.TypeInputPeer,
     message?: string,
-    hideName = false,
+    hideName = true,
     includeUpgrade = false
 ): Promise<any> {
     const invoiceParams: any = {
@@ -87,16 +118,13 @@ export async function payStarGift(
     );
 
     //Отправляем PaymentForm, чтобы списать звёзды и завершить покупку
-    const result = await client.invoke(
-        new Api.payments.SendPaymentForm({
-            formId: paymentForm.formId,
-            invoice: invoice,
-            credentials: new Api.InputPaymentCredentialsSaved({
-                id: "", // пусто, потому что мы используем Telegram Stars
-                tmpPassword: Buffer.alloc(0),
-            }),
-        })
-    );
+    // const result = await client.invoke(
+    //     new Api.payments.SendStarsForm({
+    //         formId: paymentForm.formId,
+    //         invoice: invoice,
+    //     })
+    // );
 
-    return result;
+    //return result;
+    return paymentForm;
 }

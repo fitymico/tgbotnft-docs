@@ -9,9 +9,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { loginFlow, saveSession, client } from './mtprotoClient.js';
-import { getStarGifts, checkCanSendGift, payStarGift, } from './processWrap.js';
+import { getStarGifts, payStarGift, } from './processWrap.js';
 dotenv.config();
 
+const targetPeer = await client.getInputEntity('me');
 interface aiogramBotStatus {
     is_running: boolean,
     status_text: string,
@@ -72,16 +73,50 @@ async function processFullCycle(): Promise<void> {
     }
 
     console.log("\nНайденные подарки:");
-    for (const g of gifts) {
+
+    let count = 0;
+    for (const g of gifts) { 
+        if (count == 1) break;
+
         console.log("-----------------------------");
         console.log("ID:", g.id);
+        console.log("Stars:", g.stars);
+        console.log("AvailabilityRemains:", g.availabilityRemains);
 
+        if (g.availabilityRemains === 0) {
+            console.log("❌ НЕЛЬЗЯ КУПИТЬ: распродано или недоступно");
+            continue; // Переходим к следующему подарку
+        }
+        console.log("✅ МОЖНО КУПИТЬ!");
+        const result = await payStarGift(
+            g.id.value,
+            targetPeer,
+            undefined,
+            true,
+            false
+        );
+        //console.log("Result:\n", result);
+        count++;
+        // const result = await checkCanSendGift(g.id);
+        // console.log("Can Send Gift Result:", result);
+        // console.log("Stars:", g.stars);
+        // console.log("SoldOut:", g.soldOut);
+        // console.log("AvailabilityTotal:", g.availabilityTotal);
+        // console.log("AvailabilityRemains:", g.availabilityRemains);
     }
+    // console.log(Object.keys(g));
 
+    return;
 }
 
 processFullCycle();
 
-// Добавить alt - эмодзи, который показывает подарок ( мб придется использовать getGiftReadableName() )
-// Добавить определение подарков (можно купить или уже нет, может это базовые подарки телеграма)
-// Сделать сортировку по ID (можно сделать список: 'эмодзи': {а тут все id для этого эмодзи} )
+// Добавить определение подарков (можно купить или уже нет, может это базовые подарки телеграма (из кол-во null)):
+//    Нужно создать список уже имеющихся подарков, отправлять запрос getStarGifts() и проверять, не появилось ли что-то новое;
+//    У меня будет массив всех ID , отправляю запрос getStarGifts() и проверяю количество ID в двух наборах:
+//        Если после отправки запроса появился новый ID , то размер будет больше. Далее будет проверка на soldOut и покупку в соответствии с правилами json.
+
+// НУЖНО ПОДСУНУТЬ ФУНКЦИЮ CheckCanSendGift В api.d.ts файл (вручную)
+
+
+//[ 'CONSTRUCTOR_ID', 'SUBCLASS_OF_ID', 'className', 'classType', 'originalArgs', 'flags', 'limited', 'soldOut', 'birthday', 'id', 'sticker', 'stars', 'availabilityRemains', 'availabilityTotal', 'convertStars', 'firstSaleDate', 'lastSaleDate', 'upgradeStars' ]
