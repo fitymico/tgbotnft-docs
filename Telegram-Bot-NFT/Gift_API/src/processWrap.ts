@@ -1,6 +1,7 @@
 import { Api, TelegramClient } from "telegram";
 import { client } from "./mtprotoClient.js";
 import bigInt from "big-integer";
+//import { targetPeer } from './giftBot.js';
 
 // const BaseType = Api.payments.StarGift || Api.TypeObject || Object;
 
@@ -93,6 +94,26 @@ export async function getStarGifts(): Promise<any> {
 //     const req = new CheckCanSendGift(id);
 //     return await client.invoke(req as any);
 // }
+let cachedInputPeer: any | null = null;
+
+export async function getStars(): Promise<any> {
+    try {
+        return await client.invoke(new Api.payments.GetStarsStatus({}));
+    } catch (err) {
+        try {
+            if (!cachedInputPeer) {
+                const me = await client.getMe().catch(() => null);
+                if (!me) throw new Error("client not authorized (getMe returned null)");
+                cachedInputPeer = await client.getInputEntity(me);
+            }
+            return await client.invoke(new Api.payments.GetStarsStatus({ peer: cachedInputPeer }));
+        } catch (err2) {
+            console.error("[getStars] both direct and fallback calls failed:", err, err2);
+            return null;
+        }
+    }
+    
+}
 
 //==================================================== ОПЛАТА ПОДАРКА ====================================================
 

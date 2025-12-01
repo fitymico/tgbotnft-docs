@@ -9,7 +9,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { loginFlow, saveSession, client } from './mtprotoClient.js';
-import { getStarGifts, payStarGift, } from './processWrap.js';
+import { getStarGifts, payStarGift, getStars } from './processWrap.js';
+import { availableMemory } from 'process';
 dotenv.config();
 
 const targetPeer = await client.getInputEntity('me');
@@ -153,47 +154,115 @@ const status = JSON.parse(fs.readFileSync(filepathStatus, "utf8")) as {
 //======================================================================================================
 
 async function processFullCycle(): Promise<void> {
+    // Узнаем кол-во звезд на балансе
+    let starsInfo = await getStars();
+    let stars = Number(starsInfo.balance.amount.value);
+    //console.log("Баланс звёзд:", stars);
+
+    // Подгружаем множество подарков из файла
     const seen = loadSeenSet();
 
     const res = await getStarGifts();
     let gifts: Array<any> = res?.gifts ?? (Array.isArray(res) ? res : null); // поменять на const перед запуском на серве
+    //console.log("AvailabilityRemains:", gifts[20]?.availabilityRemains);
 
     // ОБЯЗАТЕЛЬНО УБРАТЬ ПЕРЕД ЗАПУСКОМ НА СЕРВ
     if (gifts) {
         console.log("[DEBUG]: gifts пуст — используются тестовые данные");
 
         gifts.push(
-            { id: "1234567890000" },
-            { id: "9876543219999" }
+            { id: "1234567890000", stars: "500", availabilityRemains: "200000" },
+            { id: "1111111110000", stars: "800", availabilityRemains: "150000" },
+            { id: "9876543219999", stars: "2500", availabilityRemains: "10000" }
         );
     }
     //============================================
 
-    const currentIDs = gifts.map(g => idToString(g.id));
+    const currentGifts = gifts.map(g => ({
+        id: idToString(g.id),
+        stars: g.stars ?? 0,
+        availabilityRemains: g.availabilityRemains
+    }));
 
-    if (seen.size === currentIDs.length) {
+    if (seen.size === currentGifts.length) {
         console.log("[DEBUG]: Новых подарков не найдено...")
         return
     }
     else {
-        // нужно создать список ID, которые являются новыми - тут же вывести их список через console.log
-        const foundIDs = currentIDs.filter(id => !seen.has(id))
-        console.log("[DEBUG]: Найдены новые подарки:", foundIDs);
+        // список с новыми ID
+        const foundIDs = currentGifts.filter(id => !seen.has(id.id))
+        //console.log("[DEBUG]: Найдены новые подарки:", foundIDs);
 
-        // тут открывается файл с настройками: data/status.json (описывает как нужно покупать подарки и по сколько штук)
+        // открытие файла с настройками: data/status.json
         if (!fs.existsSync(filepathStatus)) {
             console.log("[DEBUG] Файл data/status.json не найден...")
             return
         }
         else {
+            // парсинг правил для закупки подарков
             const purchaseRules = parseDistribution(status.distribution);
-            console.log(purchaseRules);
+            //console.log(purchaseRules);
+
+            for (const rule of purchaseRules) {
+                // текущие параметры закупки
+                const {min, max, count} = rule;
+                //console.log("Current rules: ", min, max, count);
+
+                // найденные подарки в соответствии с правилом
+                const candidates = foundIDs.filter(gift => {
+                    //console.log("gift.stars: ", gift.stars);
+                    return gift.stars >= min && gift.stars <= max;
+                })
+                console.log(candidates);
+                // назначение количества итераций
+                const toBuy = Math.min(count, candidates.length);
+                for (let i = 0; i < toBuy; i++) {
+                    const gift = candidates[i];
+
+                    // проверка баланса
+                    if (stars < gift?.stars) {
+                        console.log(`[DEBUG] Недостаточно звёзд для покупки подарка ${gift?.id} (нужно ${gift?.stars}, есть ${stars})`);
+                        break;
+                    }
+
+                    // проверка наличия подарка
+                    if (gift?.availabilityRemains === null || gift?.availabilityRemains === 0) {
+                        console.log(`[DEBUG] Подарка с ${gift?.id} уже не осталось`);
+                        break;
+                    }
+
+                    // проверка что ID реально есть
+                    if (!gift?.id) {
+                        console.log("gift.id отсутствует, пропуск подарка", gift);
+                        continue;
+                    }
+
+                    // преобразование из string в bigint
+                    const giftIdBigInt = BigInt(gift.id);
+                    //console.log(giftIdBigInt);
+
+                    // покупка подарка
+                    const result = await payStarGift(
+                        giftIdBigInt,
+                        targetPeer,
+                        undefined,
+                        true,
+                        false
+                    );
+                    console.log(result);
+
+                    stars -= gift.stars;
+                    console.log(`[DEBUG] Куплен подарок ${giftIdBigInt}, стоимость ${gift.stars} звезд, остаток: ${stars} звезд на балансе`);
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                }
+            }
         }
 
-        // далее тут запускаем цикл исходя из данных, полученных из файла (+ нужно получить макс. количество подарков на юзера, + проверка на наличие у меня звезд)
         // выходим из этого цикла только когда выкупили все подарки в соответствии с файлом-настройкой (data/status.json)
+        //      ОБЯЗАТЕЛЬНО НАСТРОИТЬ ПРАВИЛЬНОСТЬ ВЫКУПА ПОДАРКОВ - НЕ ОДИН ПОДАРОК, А 10
 
         // сделав полный выкуп, добавляем ID новых подарков в файл data/giftID.json
+        // добавить файл лога, в который всегда будет записываться процесс работы программы
     }
     
     return
@@ -221,11 +290,6 @@ async function main(): Promise<void> {
 }
 
 main();
-
-// Добавить определение подарков (можно купить или уже нет, может это базовые подарки телеграма (их кол-во null)):
-//    Нужно создать список уже имеющихся подарков, отправлять запрос getStarGifts() и проверять, не появилось ли что-то новое;
-//    У меня будет массив всех ID , отправляю запрос getStarGifts() и проверяю количество ID в двух наборах:
-//        Если после отправки запроса появился новый ID , то размер будет больше. Далее будет проверка на soldOut и покупку в соответствии с правилами json.
 
 
 //[ 'CONSTRUCTOR_ID', 'SUBCLASS_OF_ID', 'className', 'classType', 'originalArgs', 'flags', 'limited', 'soldOut', 'birthday', 'id', 'sticker', 'stars', 'availabilityRemains', 'availabilityTotal', 'convertStars', 'firstSaleDate', 'lastSaleDate', 'upgradeStars' ]
