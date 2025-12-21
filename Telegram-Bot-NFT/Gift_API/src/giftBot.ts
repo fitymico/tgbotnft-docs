@@ -94,6 +94,50 @@ function idToString(idObj: any): string {
     return String(idObj);
 }
 
+function starsToNumber(starsObj: any): number {
+    if (starsObj == null) return 0;
+    if (typeof starsObj === "number") return starsObj;
+    if (typeof starsObj === "string") return parseInt(starsObj, 10) || 0;
+    if (typeof starsObj === "object" && "value" in starsObj) {
+        try { return Number(starsObj.value); } catch {}
+    }
+    if (typeof starsObj === "bigint") return Number(starsObj);
+    return 0;
+}
+
+//================================== Логирование ==================================
+
+const LOG_DIR = path.join("/home/dimzzz/Telegram-Bot-NFT", "data");
+const LOG_FILE = path.join(LOG_DIR, "bot.log");
+
+function debugLog(message: string): void {
+    // Выводим только в консоль (не записываем в файл)
+    console.log(message);
+}
+
+function logPurchase(message: string): void {
+    // Выводим в консоль
+    console.log(message);
+    
+    // Записываем в файл лога
+    try {
+        // Создаем директорию, если её нет
+        if (!fs.existsSync(LOG_DIR)) {
+            fs.mkdirSync(LOG_DIR, { recursive: true });
+        }
+        
+        // Форматируем сообщение с временной меткой
+        const timestamp = new Date().toISOString();
+        const logMessage = `[${timestamp}] ${message}\n`;
+        
+        // Добавляем в файл (append mode)
+        fs.appendFileSync(LOG_FILE, logMessage, { encoding: "utf8" });
+    } catch (e) {
+        // Если не удалось записать в лог, выводим ошибку в консоль, но не прерываем выполнение
+        console.error("Ошибка при записи в лог-файл:", e);
+    }
+}
+
 //======================================================================================================
 //================================= Разбор строки распределения звезд ==================================
 
@@ -152,11 +196,13 @@ const status = JSON.parse(fs.readFileSync(filepathStatus, "utf8")) as {
 };
 
 //======================================================================================================
+let tempStarsNumber = 0;
+let stars = 45000;  // ОБЯЗАТЕЛЬНО УБРАТЬ (ЭТО НУЖНО ДЛЯ ТЕСТА)
 
 async function processFullCycle(): Promise<void> {
     // Узнаем кол-во звезд на балансе
-    let starsInfo = await getStars();
-    let stars = Number(starsInfo.balance.amount.value);
+    // let starsInfo = await getStars();
+    // let stars = Number(starsInfo.balance.amount.value);
     //console.log("Баланс звёзд:", stars);
 
     // Подгружаем множество подарков из файла
@@ -168,24 +214,32 @@ async function processFullCycle(): Promise<void> {
 
     // ОБЯЗАТЕЛЬНО УБРАТЬ ПЕРЕД ЗАПУСКОМ НА СЕРВ
     if (gifts) {
-        console.log("[DEBUG]: gifts пуст — используются тестовые данные");
+        debugLog("[DEBUG]: gifts пуст — используются тестовые данные");
 
         gifts.push(
+            { id: "3333333333333", stars: "3500", availabilityRemains: "3" },
             { id: "1234567890000", stars: "500", availabilityRemains: "200000" },
-            { id: "1111111110000", stars: "800", availabilityRemains: "150000" },
-            { id: "9876543219999", stars: "2500", availabilityRemains: "10000" }
+            { id: "1111111110000", stars: "800", availabilityRemains: "5" },
+            { id: "2222222222222", stars: "2500", availabilityRemains: "3" }
         );
     }
     //============================================
 
-    const currentGifts = gifts.map(g => ({
+    let currentGifts = gifts.map(g => ({    // ЗДЕСЬ ОБЯЗАТЕЛЬНО СДЕЛАТЬ CONST А НЕ LET
         id: idToString(g.id),
-        stars: g.stars ?? 0,
+        stars: starsToNumber(g.stars),
         availabilityRemains: g.availabilityRemains
     }));
 
+    if (tempStarsNumber === 0) {
+        tempStarsNumber += 1;
+    }
+    else if (tempStarsNumber > 0) {
+        currentGifts.length += 4;
+    }
+
     if (seen.size === currentGifts.length) {
-        console.log("[DEBUG]: Новых подарков не найдено...")
+        debugLog("[DEBUG]: Новых подарков не найдено...")
         return
     }
     else {
@@ -193,76 +247,152 @@ async function processFullCycle(): Promise<void> {
         const foundIDs = currentGifts.filter(id => !seen.has(id.id))
         //console.log("[DEBUG]: Найдены новые подарки:", foundIDs);
 
+        // Если новых подарков не найдено, выходим (для подстраховки)
+        if (foundIDs.length === 0) {
+            debugLog("[DEBUG]: Новых подарков не найдено...")
+            return
+        }
+
         // открытие файла с настройками: data/status.json
         if (!fs.existsSync(filepathStatus)) {
-            console.log("[DEBUG] Файл data/status.json не найден...")
+            debugLog("[DEBUG] Файл data/status.json не найден...")
             return
         }
         else {
             // парсинг правил для закупки подарков
             const purchaseRules = parseDistribution(status.distribution);
-            //console.log(purchaseRules);
-
+            
+            // Создаем счетчики для каждого диапазона (сколько уже куплено в каждом диапазоне)
+            const rangeCounters = new Map<string, {rule: PurchaseRule, bought: number}>();
             for (const rule of purchaseRules) {
-                // текущие параметры закупки
-                const {min, max, count} = rule;
-                //console.log("Current rules: ", min, max, count);
+                const rangeKey = `${rule.min}-${rule.max}`;
+                rangeCounters.set(rangeKey, { rule, bought: 0 });
+            }
 
-                // найденные подарки в соответствии с правилом
-                const candidates = foundIDs.filter(gift => {
-                    //console.log("gift.stars: ", gift.stars);
-                    return gift.stars >= min && gift.stars <= max;
-                })
-                console.log(candidates);
-                // назначение количества итераций
-                const toBuy = Math.min(count, candidates.length);
-                for (let i = 0; i < toBuy; i++) {
-                    const gift = candidates[i];
+            // Сортируем все подарки по убыванию стоимости (глобально)
+            const allGifts = foundIDs.filter(gift => {
+                // проверка что ID реально есть
+                if (!gift?.id) return false;
+                // проверка наличия подарка
+                if (gift?.availabilityRemains === null || gift?.availabilityRemains === 0) return false;
+                return true;
+            });
+            
+            allGifts.sort((a, b) => b.stars - a.stars);
+            
+            logPurchase(`[DEBUG] Всего найдено ${allGifts.length} доступных подарков для покупки`);
 
-                    // проверка баланса
-                    if (stars < gift?.stars) {
-                        console.log(`[DEBUG] Недостаточно звёзд для покупки подарка ${gift?.id} (нужно ${gift?.stars}, есть ${stars})`);
+            // Множество для хранения ID подарков, которые были куплены в этом цикле
+            const boughtInThisCycle = new Set<string>();
+            // Множество для хранения ID подарков, которые были обработаны в этом цикле
+            const processedInThisCycle = new Set<string>();
+
+            // Проходим по всем подаркам в порядке убывания стоимости
+            for (const gift of allGifts) {
+                if (processedInThisCycle.has(gift.id)) continue;
+                processedInThisCycle.add(gift.id);
+
+                // Определяем, к каким диапазонам относится этот подарок
+                const applicableRules: Array<{rule: PurchaseRule, rangeKey: string}> = [];
+                for (const rule of purchaseRules) {
+                    const rangeKey = `${rule.min}-${rule.max}`;
+                    const counter = rangeCounters.get(rangeKey);
+                    if (!counter) continue;
+                    
+                    const giftStars = gift.stars;
+                    if (giftStars >= rule.min && giftStars <= rule.max && counter.bought < rule.count) {
+                        applicableRules.push({ rule, rangeKey });
+                    }
+                }
+
+                // Если подарок не относится ни к одному диапазону, который еще нужно заполнить, пропускаем
+                if (applicableRules.length === 0) {
+                    continue;
+                }
+
+                // Преобразование из string в bigint
+                const giftIdBigInt = BigInt(gift.id);
+                
+                // Определяем доступность подарка
+                let giftAvailability = gift.availabilityRemains;
+                if (typeof giftAvailability === "string") {
+                    giftAvailability = parseInt(giftAvailability, 10) || 0;
+                } else if (typeof giftAvailability === "object" && "value" in giftAvailability) {
+                    giftAvailability = Number(giftAvailability.value) || 0;
+                } else {
+                    giftAvailability = Number(giftAvailability) || 0;
+                }
+
+                // Покупаем подарок, пока есть доступность, звезды, и есть диапазоны, которые нужно заполнить
+                while (giftAvailability > 0 && stars >= gift.stars) {
+                    // Проверяем, есть ли еще диапазоны, которые нужно заполнить
+                    const activeRules = applicableRules.filter(({rule, rangeKey}) => {
+                        const counter = rangeCounters.get(rangeKey);
+                        return counter && counter.bought < rule.count;
+                    });
+
+                    if (activeRules.length === 0) {
+                        // Все диапазоны, к которым относится этот подарок, уже заполнены
                         break;
                     }
 
-                    // проверка наличия подарка
-                    if (gift?.availabilityRemains === null || gift?.availabilityRemains === 0) {
-                        console.log(`[DEBUG] Подарка с ${gift?.id} уже не осталось`);
-                        break;
-                    }
-
-                    // проверка что ID реально есть
-                    if (!gift?.id) {
-                        console.log("gift.id отсутствует, пропуск подарка", gift);
-                        continue;
-                    }
-
-                    // преобразование из string в bigint
-                    const giftIdBigInt = BigInt(gift.id);
-                    //console.log(giftIdBigInt);
-
-                    // покупка подарка
-                    const result = await payStarGift(
-                        giftIdBigInt,
-                        targetPeer,
-                        undefined,
-                        true,
-                        false
-                    );
-                    console.log(result);
+                    // Покупаем подарок
+                    // const result = await payStarGift(
+                    //     giftIdBigInt,
+                    //     targetPeer,
+                    //     undefined,
+                    //     true,
+                    //     false
+                    // );
+                    //console.log(result);
 
                     stars -= gift.stars;
-                    console.log(`[DEBUG] Куплен подарок ${giftIdBigInt}, стоимость ${gift.stars} звезд, остаток: ${stars} звезд на балансе`);
+                    giftAvailability--;
+                    boughtInThisCycle.add(gift.id);
+
+                    // Обновляем счетчики для всех диапазонов, к которым относится подарок
+                    for (const {rangeKey} of activeRules) {
+                        const counter = rangeCounters.get(rangeKey);
+                        if (counter) {
+                            counter.bought++;
+                        }
+                    }
+
+                    // Формируем сообщение о покупке
+                    const rangeInfo = activeRules.map(({rule, rangeKey}) => {
+                        const counter = rangeCounters.get(rangeKey);
+                        return `${rangeKey} (${counter?.bought || 0}/${rule.count})`;
+                    }).join(', ');
+
+                    logPurchase(`[DEBUG] Куплен подарок ${giftIdBigInt}, стоимость ${gift.stars} звезд, остаток: ${stars} звезд на балансе. Диапазоны: ${rangeInfo}`);
                     await new Promise(resolve => setTimeout(resolve, 200));
                 }
+
+                if (giftAvailability <= 0) {
+                    logPurchase(`[DEBUG] Подарка с ${gift.id} больше не осталось`);
+                }
+                if (stars < gift.stars) {
+                    logPurchase(`[DEBUG] Недостаточно звёзд для дальнейшей покупки подарка ${gift.id} (нужно ${gift.stars}, есть ${stars})`);
+                }
             }
+
+            // Выводим итоговую статистику по диапазонам
+            for (const [rangeKey, counter] of rangeCounters.entries()) {
+                if (counter.bought < counter.rule.count) {
+                    logPurchase(`[DEBUG] Не удалось купить все подарки в диапазоне ${rangeKey}: куплено ${counter.bought} из ${counter.rule.count}`);
+                } else {
+                    logPurchase(`[DEBUG] Достигнуто нужное количество подарков в диапазоне ${rangeKey}: куплено ${counter.bought} из ${counter.rule.count}`);
+                }
+            }
+
+            // После завершения всех покупок добавляем все обработанные подарки в seen set
+            for (const giftId of processedInThisCycle) {
+                seen.add(giftId);
+            }
+
+            // Сохраняем обновленный seen set после всех покупок
+            saveSeenSet(seen);
         }
-
-        // выходим из этого цикла только когда выкупили все подарки в соответствии с файлом-настройкой (data/status.json)
-        //      ОБЯЗАТЕЛЬНО НАСТРОИТЬ ПРАВИЛЬНОСТЬ ВЫКУПА ПОДАРКОВ - НЕ ОДИН ПОДАРОК, А 10
-
-        // сделав полный выкуп, добавляем ID новых подарков в файл data/giftID.json
-        // добавить файл лога, в который всегда будет записываться процесс работы программы
     }
     
     return
@@ -290,45 +420,3 @@ async function main(): Promise<void> {
 }
 
 main();
-
-
-//[ 'CONSTRUCTOR_ID', 'SUBCLASS_OF_ID', 'className', 'classType', 'originalArgs', 'flags', 'limited', 'soldOut', 'birthday', 'id', 'sticker', 'stars', 'availabilityRemains', 'availabilityTotal', 'convertStars', 'firstSaleDate', 'lastSaleDate', 'upgradeStars' ]
-
-    // if (!gifts) {
-    //     console.log("Не нашёл поле gifts.");
-    //     return;
-    // }
-
-    // console.log("\nНайденные подарки:");
-
-    // let count = 0;
-    // for (const g of gifts) { 
-    //     if (count == 1) break;
-
-    //     console.log("-----------------------------");
-    //     console.log("ID:", g.id);
-    //     console.log("Stars:", g.stars);
-    //     console.log("AvailabilityRemains:", g.availabilityRemains);
-
-    //     if (g.availabilityRemains === 0) {
-    //         console.log("❌ НЕЛЬЗЯ КУПИТЬ: распродано или недоступно");
-    //         continue; // Переходим к следующему подарку
-    //     }
-    //     console.log("✅ МОЖНО КУПИТЬ!");
-    //     const result = await payStarGift(
-    //         g.id.value,
-    //         targetPeer,
-    //         undefined,
-    //         true,
-    //         false
-    //     );
-    //     //console.log("Result:\n", result);
-    //     count++;
-    //     // const result = await checkCanSendGift(g.id);
-    //     // console.log("Can Send Gift Result:", result);
-    //     // console.log("Stars:", g.stars);
-    //     // console.log("SoldOut:", g.soldOut);
-    //     // console.log("AvailabilityTotal:", g.availabilityTotal);
-    //     // console.log("AvailabilityRemains:", g.availabilityRemains);
-    // }
-    // console.log(Object.keys(g));
