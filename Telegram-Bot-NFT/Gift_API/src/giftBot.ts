@@ -196,56 +196,36 @@ const status = JSON.parse(fs.readFileSync(filepathStatus, "utf8")) as {
 };
 
 //======================================================================================================
-let tempStarsNumber = 0;
-let stars = 45000;  // ОБЯЗАТЕЛЬНО УБРАТЬ (ЭТО НУЖНО ДЛЯ ТЕСТА)
 
 async function processFullCycle(): Promise<void> {
     // Узнаем кол-во звезд на балансе
-    // let starsInfo = await getStars();
-    // let stars = Number(starsInfo.balance.amount.value);
-    //console.log("Баланс звёзд:", stars);
+    let starsInfo = await getStars();
+    let stars = Number(starsInfo.balance.amount.value);
 
     // Подгружаем множество подарков из файла
     const seen = loadSeenSet();
 
     const res = await getStarGifts();
-    let gifts: Array<any> = res?.gifts ?? (Array.isArray(res) ? res : null); // поменять на const перед запуском на серве
-    //console.log("AvailabilityRemains:", gifts[20]?.availabilityRemains);
+    const gifts: Array<any> = res?.gifts ?? (Array.isArray(res) ? res : null);
 
-    // ОБЯЗАТЕЛЬНО УБРАТЬ ПЕРЕД ЗАПУСКОМ НА СЕРВ
-    if (gifts) {
-        debugLog("[DEBUG]: gifts пуст — используются тестовые данные");
-
-        gifts.push(
-            { id: "3333333333333", stars: "3500", availabilityRemains: "3" },
-            { id: "1234567890000", stars: "500", availabilityRemains: "200000" },
-            { id: "1111111110000", stars: "800", availabilityRemains: "5" },
-            { id: "2222222222222", stars: "2500", availabilityRemains: "3" }
-        );
+    if (!gifts) {
+        console.log("Не нашёл поле gifts.");
+        return;
     }
-    //============================================
 
-    let currentGifts = gifts.map(g => ({    // ЗДЕСЬ ОБЯЗАТЕЛЬНО СДЕЛАТЬ CONST А НЕ LET
+    const currentGifts = gifts.map(g => ({
         id: idToString(g.id),
         stars: starsToNumber(g.stars),
         availabilityRemains: g.availabilityRemains
     }));
-
-    if (tempStarsNumber === 0) {
-        tempStarsNumber += 1;
-    }
-    else if (tempStarsNumber > 0) {
-        currentGifts.length += 4;
-    }
 
     if (seen.size === currentGifts.length) {
         debugLog("[DEBUG]: Новых подарков не найдено...")
         return
     }
     else {
-        // список с новыми ID
+        // Cписок с новыми ID
         const foundIDs = currentGifts.filter(id => !seen.has(id.id))
-        //console.log("[DEBUG]: Найдены новые подарки:", foundIDs);
 
         // Если новых подарков не найдено, выходим (для подстраховки)
         if (foundIDs.length === 0) {
@@ -253,13 +233,13 @@ async function processFullCycle(): Promise<void> {
             return
         }
 
-        // открытие файла с настройками: data/status.json
+        // Открытие файла с настройками: data/status.json
         if (!fs.existsSync(filepathStatus)) {
             debugLog("[DEBUG] Файл data/status.json не найден...")
             return
         }
         else {
-            // парсинг правил для закупки подарков
+            // Парсинг правил для закупки подарков
             const purchaseRules = parseDistribution(status.distribution);
             
             // Создаем счетчики для каждого диапазона (сколько уже куплено в каждом диапазоне)
@@ -271,9 +251,9 @@ async function processFullCycle(): Promise<void> {
 
             // Сортируем все подарки по убыванию стоимости (глобально)
             const allGifts = foundIDs.filter(gift => {
-                // проверка что ID реально есть
+                // Проверка что ID реально есть
                 if (!gift?.id) return false;
-                // проверка наличия подарка
+                // Проверка наличия подарка
                 if (gift?.availabilityRemains === null || gift?.availabilityRemains === 0) return false;
                 return true;
             });
@@ -337,14 +317,17 @@ async function processFullCycle(): Promise<void> {
                     }
 
                     // Покупаем подарок
-                    // const result = await payStarGift(
-                    //     giftIdBigInt,
-                    //     targetPeer,
-                    //     undefined,
-                    //     true,
-                    //     false
-                    // );
-                    //console.log(result);
+                    const result = await payStarGift(
+                        giftIdBigInt,
+                        targetPeer,
+                        undefined,
+                        true,
+                        false
+                    );
+
+                    if (!result) {
+                        throw new Error("Покупка вернула пустой результат");
+                    }
 
                     stars -= gift.stars;
                     giftAvailability--;

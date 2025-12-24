@@ -1,7 +1,7 @@
 #!/bin/bash
 
-WORKDIR="../NFT_Bot"
-FILENAME="nftbot.py"
+WORKDIR="../Gift_API/src"
+FILENAME="giftBot.ts"
 
 if [ -d "$WORKDIR" ]; then
     echo "Entering working directory: $WORKDIR"
@@ -11,8 +11,8 @@ else
 fi
 
 if [ -f "$FILENAME" ]; then
-    echo "Starting bot: $FILENAME"
-    python3 "$FILENAME"
+    echo "Starting scaning: $FILENAME"
+    npm run dev
 else
     echo "No file name: $FILENAME" && exit 1
 fi

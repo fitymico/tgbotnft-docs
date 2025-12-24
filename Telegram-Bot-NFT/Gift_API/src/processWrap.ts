@@ -139,13 +139,13 @@ export async function payStarGift(
     );
 
     //Отправляем PaymentForm, чтобы списать звёзды и завершить покупку
-    // const result = await client.invoke(
-    //     new Api.payments.SendStarsForm({
-    //         formId: paymentForm.formId,
-    //         invoice: invoice,
-    //     })
-    // );
+    const result = await client.invoke(
+        new Api.payments.SendStarsForm({
+            formId: paymentForm.formId,
+            invoice: invoice,
+        })
+    );
 
-    //return result;
-    return paymentForm;
+    return result;
+    //return paymentForm;
 }
