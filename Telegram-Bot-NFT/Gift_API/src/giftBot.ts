@@ -162,7 +162,7 @@ function parseDistribution(distribution: string): PurchaseRule[] {
         const rangePart = parts.slice(0, parts.length - 1).join(" ");
 
         // Разбиваем диапазон по "и", если есть
-        const rangePieces = rangePart.split("и").map(p => p.trim());
+        const rangePieces = rangePart.split(/\s+(?:и|and)\s+/i).map(p => p.trim());
 
         for (const piece of rangePieces) {
             let match;

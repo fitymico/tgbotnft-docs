@@ -1,12 +1,14 @@
-import asyncio, json, os, tempfile, fcntl
+import asyncio, json, os, tempfile, fcntl, re
 import subprocess
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from aiogram import F
 
 # ================== Настройки ==================
 BOT_TOKEN = "***REDACTED_BOT_TOKEN***"
 ADMIN_ID = ***REDACTED_ADMIN_ID***
 STATUS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/status.json")
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/bot.log")
 
 # ================== Инициализация бота ==================
 bot = Bot(token=BOT_TOKEN)
@@ -64,54 +66,66 @@ def write_status_atomic(data: dict):
             except:
                 pass
 
-async def handle_text_after_buttons(message: types.Message):
-    user_id = message.from_user.id
-    if user_id != ADMIN_ID:
-        return
-
-    state = user_states.get(user_id)
-    if not state:
-        return
-
-    text = message.text.strip()
-    if not text:
-        await message.answer("Пустой ввод. Попробуйте снова.")
-        return
-
-    s = read_status()
-
-    if state == "awaiting_distribution":
-        s["distribution"] = text
-        await message.answer("✅ Распределение звёзд сохранено!", reply_markup=make_kb_grid_minor())
-    elif state == "awaiting_iterations":
+def validate_distribution(text: str) -> tuple[bool, str]:
+    """
+    Проверяет правильность формата распределения звезд.
+    Формат: <условие> <количество>
+    Пример: <1000 10
+            >=1000 и <5000 5
+            >5000 1
+    """
+    lines = text.strip().split('\n')
+    if not lines:
+        return False, "Пустой ввод"
+    
+    for i, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line:
+            continue
+        
+        # Разделяем строку на части
+        parts = line.split()
+        if len(parts) < 2:
+            return False, f"Ошибка в строке {i}: недостаточно значений"
+        
+        # Проверяем количество (последний элемент)
         try:
-            s["iterations_total"] = int(text)
-            await message.answer(f"✅ Количество итераций сохранено: {text}", reply_markup=make_kb_grid_minor())
+            quantity = int(parts[-1])
+            if quantity <= 0:
+                return False, f"Ошибка в строке {i}: количество должно быть положительным числом"
         except ValueError:
-            await message.answer("❌ Введите число, например: 10")
-            return
-    elif state == "awaiting_delay":
-        try:
-            s["delay"] = float(text)
-            await message.answer(f"✅ Задержка сохранена: {text} сек", reply_markup=make_kb_grid_minor())
-        except ValueError:
-            await message.answer("❌ Введите число, например: 1.5")
-            return
-
-    write_status_atomic(s)
-    user_states.pop(user_id, None)
+            return False, f"Ошибка в строке {i}: количество должно быть целым числом"
+        
+        # Извлекаем условие (все части кроме последней - количества)
+        condition_parts = parts[:-1]
+        
+        # Собираем условие обратно в строку
+        condition = ' '.join(condition_parts)
+        
+        # Проверяем сложные условия с "и"
+        if " и " in condition:
+            sub_conditions = condition.split(" и ")
+            for sub_cond in sub_conditions:
+                sub_cond = sub_cond.strip()
+                if not re.match(r'^[<>=]=?\d+(\.\d+)?$', sub_cond):
+                    return False, f"Ошибка в строке {i}: неверный формат условия '{sub_cond}'"
+        else:
+            # Простое условие
+            if not re.match(r'^[<>=]=?\d+(\.\d+)?$', condition):
+                return False, f"Ошибка в строке {i}: неверный формат условия '{condition}'"
+    
+    return True, ""
 
 # ================== Функция создания клавиатуры ==================
 def make_kb_grid_minor():
     kb = types.ReplyKeyboardMarkup(
         keyboard=[
             [types.KeyboardButton(text="⭐ Распределение звезд ⭐")],
-            [types.KeyboardButton(text="🔁 Кол-во итераций 🔁")],
-            [types.KeyboardButton(text="⏰ Задержка ⏰")],
+            [types.KeyboardButton(text="📋 Лог-файл покупок за все время 📋")],
             [types.KeyboardButton(text="⬅️ Назад ⬅️")],
         ],
-        resize_keyboard=True,      # подгонять размер под устройство
-        one_time_keyboard=False    # False -> клавиатура остаётся видимой после нажатия
+        resize_keyboard=True,
+        one_time_keyboard=False
     )
     return kb
 
@@ -126,25 +140,102 @@ def make_kb_grid_main():
     )
     return kb
 
-async def pushed_button(message: types.Message):
-    text = message.text
+# ================== Обработчики ==================
+async def handle_text_after_buttons(message: types.Message):
+    """Обработка текста после нажатия кнопок настроек"""
+    user_id = message.from_user.id
+    if user_id != ADMIN_ID:
+        return
 
+    text = message.text.strip()
+    if not text:
+        await message.answer("Пустой ввод. Попробуйте снова.")
+        return
+    
+    # Проверяем, не нажата ли кнопка "Назад" в тексте
+    if text == "⬅️ Назад ⬅️":
+        # Удаляем состояние пользователя
+        user_states.pop(user_id, None)
+        # Показываем главное меню
+        await message.answer("Возврат в главное меню 👇", reply_markup=make_kb_grid_main())
+        return
+    
+    state = user_states.get(user_id)
+    if not state:
+        return
+
+    s = read_status()
+
+    if state == "awaiting_distribution":
+        # Проверяем валидность распределения
+        is_valid, error_msg = validate_distribution(text)
+        if not is_valid:
+            await message.answer(f"❌ {error_msg}\n\nПопробуйте снова:")
+            return
+            
+        s["distribution"] = text
+        write_status_atomic(s)
+        user_states.pop(user_id, None)
+        await message.answer("✅ Распределение звёзд сохранено!", reply_markup=make_kb_grid_minor())
+        
+    elif state == "awaiting_iterations":
+        try:
+            s["iterations_total"] = int(text)
+            write_status_atomic(s)
+            user_states.pop(user_id, None)
+            await message.answer(f"✅ Количество итераций сохранено: {text}", reply_markup=make_kb_grid_minor())
+        except ValueError:
+            await message.answer("❌ Введите число, например: 10")
+            return
+            
+    elif state == "awaiting_delay":
+        try:
+            s["delay"] = float(text)
+            write_status_atomic(s)
+            user_states.pop(user_id, None)
+            await message.answer(f"✅ Задержка сохранена: {text} сек", reply_markup=make_kb_grid_minor())
+        except ValueError:
+            await message.answer("❌ Введите число, например: 1.5")
+            return
+
+async def handle_back_button(message: types.Message):
+    """Обработка кнопки Назад"""
+    user_id = message.from_user.id
+    if user_id != ADMIN_ID:
+        return
+    
+    text = message.text.strip()
+    if text == "⬅️ Назад ⬅️":
+        # Очищаем состояние пользователя
+        user_states.pop(user_id, None)
+        # Показываем главное меню
+        await message.answer("Возврат в главное меню 👇", reply_markup=make_kb_grid_main())
+        return True
+    return False
+
+async def handle_settings_buttons(message: types.Message):
+    """Обработка кнопок настроек"""
+    user_id = message.from_user.id
+    if user_id != ADMIN_ID:
+        return False
+    
+    text = message.text.strip()
+    
     if text == "🔧 Настройки 🔧":
         kb = make_kb_grid_minor()
         await message.answer("Открываю меню настроек 👇", reply_markup=kb)
-
+        return True
+        
     elif text == "📊 Статус 📊":
         s = read_status()
         reply = (
             f"📈 Статус бота:\n"
             f"• Активен: {'✅' if s.get('is_running') else '❌'}\n"
-            f"• Статус: {s.get('status_text')}\n"
-            f"• Итерация: {s.get('iteration_current',0)}/{s.get('iterations_total',0)}\n"
-            f"• Задержка: {s.get('delay', 1.0)} сек\n"
-            f"• Распределение (строки):\n{s.get('distribution') or '— не задано —'}"
+            f"• Текущее распределение звезд:\n{s.get('distribution') or '— не задано —'}"
         )
         await message.answer(reply)
-
+        return True
+        
     elif text == "💰 Начать 💰":
         s = read_status()
         s["is_running"] = True
@@ -152,7 +243,8 @@ async def pushed_button(message: types.Message):
         write_status_atomic(s)
         subprocess.Popen(["bash", "../scripts/startbot.sh"])
         await message.answer("💰 Сканирование подарков началось!")
-
+        return True
+        
     elif text == "🛑 Остановить 🛑":
         s = read_status()
         s["is_running"] = False
@@ -160,58 +252,82 @@ async def pushed_button(message: types.Message):
         write_status_atomic(s)
         subprocess.Popen(["bash", "../scripts/stopbot.sh"])
         await message.answer("🛑 Сканирование подарков остановлено!")
-
+        return True
+        
     elif text == "⭐ Распределение звезд ⭐":
         await message.answer(
             "Введите распределение (по строкам: условие_цены количество), например:\n"
-            "<1000 10\n>=1000 и <5000 5"
+            "<1000 10\n>=1000 и <5000 5\n\n"
+            "Форматы условий:\n"
+            "<1000   (меньше 1000)\n"
+            "<=1000  (меньше или равно 1000)\n"
+            ">1000   (больше 1000)\n"
+            ">=1000  (больше или равно 1000)\n"
+            "=1000   (равно 1000)\n"
+            ">=1000 и <5000 (диапазон от 1000 до 5000; [1000,5000) ])\n\n"
+            "Или нажмите '⬅️ Назад ⬅️' для возврата"
         )
         user_states[message.from_user.id] = "awaiting_distribution"
-
-    elif text == "🔁 Кол-во итераций 🔁":
-        await message.answer("Введите количество итераций:")
-        user_states[message.from_user.id] = "awaiting_iterations"
-
-    elif text == "⏰ Задержка ⏰":
-        await message.answer("Введите задержку между покупками (в секундах):")
-        user_states[message.from_user.id] = "awaiting_delay"
-
-    elif text == "⬅️ Назад ⬅️":
-        kb_main = types.ReplyKeyboardMarkup(
-            keyboard=[
-                [types.KeyboardButton(text="🔧 Настройки 🔧"), types.KeyboardButton(text="💰 Начать 💰")],
-                [types.KeyboardButton(text="📊 Статус 📊"), types.KeyboardButton(text="🛑 Остановить 🛑")]
-            ],
-            resize_keyboard=True
-        )
-        await message.answer("Возврат в главное меню 👇", reply_markup=kb_main)
-
-# ================== Функция проверки админа ==================
-# Проверяем, что сообщение пришло именно от нас
-async def is_admin(message: types.Message) -> bool:
-    return message.from_user.id == ADMIN_ID
+        return True
+        
+    elif text == "📋 Лог-файл покупок за все время 📋":
+        if os.path.exists(LOG_FILE):
+            try:
+                with open(LOG_FILE, 'rb') as log_file:
+                    await message.answer_document(
+                        types.BufferedInputFile(
+                            log_file.read(),
+                            filename="bot_log.txt"
+                        ),
+                        caption="📋 Лог-файл покупок"
+                    )
+            except Exception as e:
+                await message.answer(f"❌ Ошибка при чтении лог-файла: {str(e)}")
+        else:
+            await message.answer("📭 Лог-файл пока пуст или не создан.")
+        return True
+    
+    return False
 
 async def controlUser(message: types.Message):
-    if not await is_admin(message):
+    """Обработка команды /start"""
+    if message.from_user.id != ADMIN_ID:
         return
+    
     kb = make_kb_grid_main()
     await message.answer(
         "🎛️ Перед тобой панель управления ботом\nВыбери нужный раздел: 👇",
         reply_markup=kb
     )
 
+# ================== Предикаты ==================
 def awaiting_input_predicate(message: types.Message) -> bool:
+    """Проверяет, ожидает ли бот ввода от пользователя"""
     uid = message.from_user.id if message.from_user else None
     if not uid or uid not in user_states:
         return False
     return user_states[uid] in ("awaiting_distribution", "awaiting_iterations", "awaiting_delay")
 
-# ================== Запуск бота ==================
+def is_back_button_predicate(message: types.Message) -> bool:
+    """Проверяет, нажата ли кнопка Назад"""
+    return message.text and message.text.strip() == "⬅️ Назад ⬅️"
+
+def is_settings_button_predicate(message: types.Message) -> bool:
+    """Проверяет, нажата ли одна из кнопок управления"""
+    text = message.text.strip() if message.text else ""
+    return text in [
+        "🔧 Настройки 🔧", "💰 Начать 💰", "📊 Статус 📊", "🛑 Остановить 🛑",
+        "⭐ Распределение звезд ⭐", "📋 Лог-файл покупок за все время 📋"
+    ]
+
+# ================== Регистрация обработчиков ==================
+# Важен порядок: сначала специфичные обработчики, потом общие
 dp.message.register(controlUser, Command(commands=["start"]))
+dp.message.register(handle_back_button, is_back_button_predicate)
 dp.message.register(handle_text_after_buttons, awaiting_input_predicate)
-dp.message.register(pushed_button)
+dp.message.register(handle_settings_buttons, is_settings_button_predicate)
 
-
+# ================== Запуск бота ==================
 async def main():
     await dp.start_polling(bot)
 

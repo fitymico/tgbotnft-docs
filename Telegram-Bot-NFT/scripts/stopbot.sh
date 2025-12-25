@@ -1,10 +1,10 @@
 #!/bin/bash
 
-FILENAME="nftbot.py"
+FILENAME="dist/giftBot.js"
 is_working=$(ps aux | grep "$FILENAME" | grep -v grep)
 
 if pgrep -f "$FILENAME" > /dev/null; then
-    echo "Убиваем процесс Telethon бота..."
+    echo "Убиваем процесс закупки..."
     pkill -f "$FILENAME"
     sleep 1
     if pgrep -f "$FILENAME" > /dev/null; then
