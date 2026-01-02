@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import asyncio, json, os, tempfile, fcntl, re
 import subprocess
 import sys

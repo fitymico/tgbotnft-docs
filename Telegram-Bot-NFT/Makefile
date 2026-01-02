@@ -94,8 +94,19 @@ docker-restart: docker-down docker-up
 # ================== Установка ==================
 venv:
 	@echo "Создание виртуального окружения..."
-	python3 -m venv $(VENV)
-	@echo "Виртуальное окружение создано в $(VENV)/"
+	@# Проверяем, что venv использует Python 3
+	@if [ -d $(VENV) ]; then \
+		if $(PYTHON) --version 2>&1 | grep -q "Python 2"; then \
+			echo "Обнаружен Python 2 в venv, пересоздаём..."; \
+			rm -rf $(VENV); \
+		fi; \
+	fi
+	@if [ ! -d $(VENV) ]; then \
+		python3 -m venv $(VENV); \
+		echo "Виртуальное окружение создано в $(VENV)/"; \
+	else \
+		echo "Виртуальное окружение уже существует"; \
+	fi
 
 install-python: venv
 	@echo "Установка Python зависимостей..."
@@ -192,6 +203,9 @@ stop-giftbot:
 	@pkill -f "dist/giftBot.js" 2>/dev/null || true
 
 stop: stop-talkbot stop-giftbot
+	@# Принудительно убиваем все оставшиеся процессы
+	@pkill -f "talkbot.py" 2>/dev/null || true
+	@pkill -f "giftBot" 2>/dev/null || true
 	@echo ""
 	@echo "✅ Все боты остановлены"
 

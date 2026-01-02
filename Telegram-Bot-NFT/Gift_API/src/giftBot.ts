@@ -234,8 +234,28 @@ async function processFullCycle(): Promise<void> {
         // Cписок с новыми ID
         const foundIDs = currentGifts.filter(id => !seen.has(id.id))
 
-        // Если новых подарков не найдено, выходим (для подстраховки)
-        if (foundIDs.length === 0) {
+        // Проверяем подарки с нулевым доступным количеством и автоматически добавляем их в seen
+        const unavailableGifts = foundIDs.filter(gift => 
+            gift?.availabilityRemains === null || gift?.availabilityRemains === 0
+        );
+        
+        if (unavailableGifts.length > 0) {
+            logPurchase(`[DEBUG] Найдено ${unavailableGifts.length} недоступных подарков, добавляем в seen:`);
+            for (const gift of unavailableGifts) {
+                seen.add(gift.id);
+                logPurchase(`[DEBUG] Добавлен недоступный подарок: ID=${gift.id}, stars=${gift.stars}, availability=${gift.availabilityRemains}`);
+            }
+            // Сохраняем обновленный seen set
+            saveSeenSet(seen);
+        }
+
+        // Фильтруем только доступные подарки для дальнейшей обработки
+        const availableGifts = foundIDs.filter(gift => 
+            gift?.availabilityRemains !== null && gift?.availabilityRemains !== 0
+        );
+
+        // Если нет доступных подарков, выходим
+        if (availableGifts.length === 0) {
             debugLog("[DEBUG]: Новых подарков не найдено...")
             return
         }
@@ -256,11 +276,11 @@ async function processFullCycle(): Promise<void> {
                 rangeCounters.set(rangeKey, { rule, bought: 0 });
             }
 
-            // Сортируем все подарки по убыванию стоимости (глобально)
-            const allGifts = foundIDs.filter(gift => {
+            // Сортируем все доступные подарки по убыванию стоимости (глобально)
+            const allGifts = availableGifts.filter(gift => {
                 // Проверка что ID реально есть
                 if (!gift?.id) return false;
-                // Проверка наличия подарка
+                // Дополнительная проверка наличия (на всякий случай)
                 if (gift?.availabilityRemains === null || gift?.availabilityRemains === 0) return false;
                 return true;
             });
@@ -410,3 +430,19 @@ async function main(): Promise<void> {
 }
 
 main();
+// await client.connect();
+// const res = await getStarGifts();
+// const gifts: Array<any> = res?.gifts ?? (Array.isArray(res) ? res : null);
+
+// let csvContent = "ID,Stars,AvailabilityRemains,Timestamp\n";
+
+// for (const g of gifts) {
+//     console.log("ID:", g.id);
+//     console.log("Stars:", g.stars);
+//     console.log("AvailabilityRemains:", g.availabilityRemains);
+
+//     csvContent += `${g.id},${g.stars},${g.availabilityRemains},${new Date().toISOString()}\n`;
+// }
+
+// const filePath = path.join(process.cwd(), 'telegram_gifts.csv');
+// fs.writeFileSync(filePath, csvContent, 'utf-8');
