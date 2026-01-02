@@ -5,14 +5,15 @@ import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
-console.log(__dirname)
+// Корневая директория проекта
+const PROJECT_ROOT = path.resolve(__dirname, "../..");
+dotenv.config({ path: path.join(PROJECT_ROOT, ".env") });
 
 import { TelegramClient, Api } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 
-const SESSIONFILE = path.join("/home/dimzzz/Telegram-Bot-NFT", "data/session.session");
+const SESSIONFILE = path.join(PROJECT_ROOT, "data/session.session");
 
 let sessionString = '';
 if (fs.existsSync(SESSIONFILE)) {

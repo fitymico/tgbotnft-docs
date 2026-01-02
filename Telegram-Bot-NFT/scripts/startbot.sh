@@ -1,7 +1,18 @@
 #!/bin/bash
 
-WORKDIR="../Gift_API/src"
-FILENAME="giftBot.ts"
+# Определяем корневую директорию проекта
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+WORKDIR="$PROJECT_ROOT/Gift_API"
+LOGFILE="$PROJECT_ROOT/data/giftbot.log"
+
+# Загружаем переменные окружения
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
 
 if [ -d "$WORKDIR" ]; then
     echo "Entering working directory: $WORKDIR"
@@ -10,9 +21,11 @@ else
     echo "No folder with name: $WORKDIR" && exit 1
 fi
 
-if [ -f "$FILENAME" ]; then
-    echo "Starting scaning: $FILENAME"
-    npm run dev
-else
-    echo "No file name: $FILENAME" && exit 1
-fi
+echo "Starting Gift API bot..."
+echo "Logs: $LOGFILE"
+
+# Запуск в фоне с перенаправлением логов
+nohup npm run dev >> "$LOGFILE" 2>&1 &
+
+echo "Gift API bot started (PID: $!)"
+echo $! > "$PROJECT_ROOT/data/giftbot.pid"

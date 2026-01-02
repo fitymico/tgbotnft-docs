@@ -8,10 +8,17 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
 import { loginFlow, saveSession, client } from './mtprotoClient.js';
 import { getStarGifts, payStarGift, getStars } from './processWrap.js';
 import { availableMemory } from 'process';
-dotenv.config();
+
+// Определяем корневую директорию проекта
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PROJECT_ROOT = path.resolve(__dirname, '../..');
+
+dotenv.config({ path: path.join(PROJECT_ROOT, '.env') });
 
 const targetPeer = await client.getInputEntity('me');
 interface aiogramBotStatus {
@@ -25,7 +32,7 @@ interface aiogramBotStatus {
 
 function loadStatus(): aiogramBotStatus {
     try {
-        const filepath = path.join("/home/dimzzz/Telegram-Bot-NFT", "data/status.json");
+        const filepath = path.join(PROJECT_ROOT, "data/status.json");
         const data = fs.readFileSync(filepath, 'utf8');
         const status: aiogramBotStatus = JSON.parse(data);
         return status;
@@ -45,7 +52,7 @@ function loadStatus(): aiogramBotStatus {
 
 function saveStatus(status: aiogramBotStatus): void {
     try {
-        const filepath = path.join("/home/dimzzz/Telegram-Bot-NFT", "data/status.json");
+        const filepath = path.join(PROJECT_ROOT, "data/status.json");
         fs.writeFileSync(filepath, JSON.stringify(status, null, 4));
         return;
     }
@@ -59,7 +66,7 @@ function saveStatus(status: aiogramBotStatus): void {
 
 function loadSeenSet(): Set<string> {
     try {
-        const filepath = path.join("/home/dimzzz/Telegram-Bot-NFT", "data/giftID.json");
+        const filepath = path.join(PROJECT_ROOT, "data/giftID.json");
         if (!fs.existsSync(filepath)) return new Set();
         const raw = fs.readFileSync(filepath, "utf8");
         const arr = JSON.parse(raw);
@@ -73,7 +80,7 @@ function loadSeenSet(): Set<string> {
 
 function saveSeenSet(seen: Set<string>): void {
     try {
-        const filepath = path.join("/home/dimzzz/Telegram-Bot-NFT", "data/giftID.json");
+        const filepath = path.join(PROJECT_ROOT, "data/giftID.json");
         const dir = path.dirname(filepath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
@@ -107,7 +114,7 @@ function starsToNumber(starsObj: any): number {
 
 //================================== Логирование ==================================
 
-const LOG_DIR = path.join("/home/dimzzz/Telegram-Bot-NFT", "data");
+const LOG_DIR = path.join(PROJECT_ROOT, "data");
 const LOG_FILE = path.join(LOG_DIR, "bot.log");
 
 function debugLog(message: string): void {
@@ -185,7 +192,7 @@ function parseDistribution(distribution: string): PurchaseRule[] {
     return rules;
 }
 
-const filepathStatus = path.join("/home/dimzzz/Telegram-Bot-NFT", "data/status.json")
+const filepathStatus = path.join(PROJECT_ROOT, "data/status.json")
 const status = JSON.parse(fs.readFileSync(filepathStatus, "utf8")) as {
     is_running: boolean;
     status_text: string;
