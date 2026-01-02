@@ -24,8 +24,19 @@ fi
 echo "Starting Gift API bot..."
 echo "Logs: $LOGFILE"
 
+# Определяем команду запуска:
+# - В Docker или если dist уже скомпилирован: npm start
+# - Иначе: npm run dev (компиляция + запуск)
+if [ -f "$WORKDIR/dist/giftBot.js" ]; then
+    echo "Using pre-compiled dist..."
+    NPM_CMD="npm start"
+else
+    echo "Compiling TypeScript..."
+    NPM_CMD="npm run dev"
+fi
+
 # Запуск в фоне с перенаправлением логов
-nohup npm run dev >> "$LOGFILE" 2>&1 &
+nohup $NPM_CMD >> "$LOGFILE" 2>&1 &
 
 echo "Gift API bot started (PID: $!)"
 echo $! > "$PROJECT_ROOT/data/giftbot.pid"
