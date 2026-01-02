@@ -1,14 +1,20 @@
 import asyncio, json, os, tempfile, fcntl, re
 import subprocess
+import sys
+from pathlib import Path
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram import F
+from dotenv import load_dotenv
 
-# ================== Настройки ==================
-BOT_TOKEN = "***REDACTED_BOT_TOKEN***"
-ADMIN_ID = ***REDACTED_ADMIN_ID***
-STATUS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/status.json")
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/bot.log")
+# Загружаем .env из корня проекта
+PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+load_dotenv(PROJECT_ROOT / ".env")
+
+# Добавляем корень проекта в путь для импорта config
+sys.path.insert(0, str(PROJECT_ROOT))
+from config import BOT_TOKEN, ADMIN_ID, STATUS_FILE, LOG_FILE
 
 # ================== Инициализация бота ==================
 bot = Bot(token=BOT_TOKEN)
@@ -241,7 +247,7 @@ async def handle_settings_buttons(message: types.Message):
         s["is_running"] = True
         s["status_text"] = "running"
         write_status_atomic(s)
-        subprocess.Popen(["bash", "../scripts/startbot.sh"])
+        subprocess.Popen(["bash", str(PROJECT_ROOT / "scripts" / "startbot.sh")])
         await message.answer("💰 Сканирование подарков началось!")
         return True
         
@@ -250,7 +256,7 @@ async def handle_settings_buttons(message: types.Message):
         s["is_running"] = False
         s["status_text"] = "stopped"
         write_status_atomic(s)
-        subprocess.Popen(["bash", "../scripts/stopbot.sh"])
+        subprocess.Popen(["bash", str(PROJECT_ROOT / "scripts" / "stopbot.sh")])
         await message.answer("🛑 Сканирование подарков остановлено!")
         return True
         
