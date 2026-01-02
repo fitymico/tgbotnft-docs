@@ -6,15 +6,15 @@ WORKDIR /app/Gift_API
 # Копируем package файлы
 COPY Gift_API/package*.json ./
 
-# Устанавливаем зависимости
-RUN npm ci --only=production
+# Устанавливаем ВСЕ зависимости (включая devDependencies для сборки)
+RUN npm ci
 
 # Копируем исходники TypeScript
 COPY Gift_API/src ./src
 COPY Gift_API/tsconfig.json ./
 
 # Компилируем TypeScript
-RUN npm run build 2>/dev/null || npx tsc
+RUN npm run build
 
 # ================== Production Stage ==================
 FROM python:3.12-slim
