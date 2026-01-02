@@ -200,12 +200,12 @@ stop-giftbot:
 		echo "Gift API бот не запущен"; \
 	fi
 	@# Также убиваем процессы node если остались
-	@pkill -f "dist/giftBot.js" 2>/dev/null || true
+	@pkill -f "node.*giftBot" 2>/dev/null || true
 
 stop: stop-talkbot stop-giftbot
 	@# Принудительно убиваем все оставшиеся процессы
-	@pkill -f "talkbot.py" 2>/dev/null || true
-	@pkill -f "giftBot" 2>/dev/null || true
+	@pkill -f "python.*talkbot" 2>/dev/null || true
+	@pkill -f "node.*giftBot" 2>/dev/null || true
 	@echo ""
 	@echo "✅ Все боты остановлены"
 
