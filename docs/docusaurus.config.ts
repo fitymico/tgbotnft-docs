@@ -42,7 +42,7 @@ const config: Config = {
   ],
 
   themeConfig: {
-    image: 'img/docusaurus-social-card.jpg',
+    image: 'img/background_3to1.png',
     colorMode: {
       defaultMode: 'dark',
       respectPrefersColorScheme: true,
