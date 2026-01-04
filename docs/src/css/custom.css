@@ -1,0 +1,225 @@
+/**
+ * Tokyo Night Theme for Docusaurus
+ */
+
+/* Tokyo Night Day (Light mode) */
+:root {
+  --ifm-color-primary: #2e7de9;
+  --ifm-color-primary-dark: #2670d4;
+  --ifm-color-primary-darker: #2468c8;
+  --ifm-color-primary-darkest: #1d56a5;
+  --ifm-color-primary-light: #4a8eeb;
+  --ifm-color-primary-lighter: #5a98ed;
+  --ifm-color-primary-lightest: #82b3f2;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(46, 125, 233, 0.1);
+
+  /* Tokyo Night Day background */
+  --ifm-background-color: #e1e2e7;
+  --ifm-background-surface-color: #d5d6db;
+  --ifm-navbar-background-color: #e1e2e7;
+  --ifm-footer-background-color: #d5d6db;
+  --ifm-card-background-color: #e9e9ec;
+
+  /* Text colors */
+  --ifm-font-color-base: #3760bf;
+  --ifm-font-color-secondary: #6172b0;
+  --ifm-heading-color: #3760bf;
+
+  /* Code blocks */
+  --ifm-code-background: #e9e9ec;
+
+  /* Accents */
+  --tokyo-purple: #9854f1;
+  --tokyo-cyan: #007197;
+  --tokyo-green: #587539;
+  --tokyo-orange: #b15c00;
+  --tokyo-red: #f52a65;
+  --tokyo-yellow: #8c6c3e;
+}
+
+/* Tokyo Night Storm (Dark mode) */
+[data-theme='dark'] {
+  --ifm-color-primary: #7aa2f7;
+  --ifm-color-primary-dark: #5d8bea;
+  --ifm-color-primary-darker: #4a7ce6;
+  --ifm-color-primary-darkest: #3d6cd9;
+  --ifm-color-primary-light: #9bb8f9;
+  --ifm-color-primary-lighter: #b3c9fb;
+  --ifm-color-primary-lightest: #d1e0fd;
+  --docusaurus-highlighted-code-line-bg: rgba(122, 162, 247, 0.2);
+
+  /* Tokyo Night Storm background */
+  --ifm-background-color: #24283b;
+  --ifm-background-surface-color: #1a1b26;
+  --ifm-navbar-background-color: #1a1b26;
+  --ifm-footer-background-color: #16161e;
+  --ifm-card-background-color: #1f2335;
+
+  /* Text colors */
+  --ifm-font-color-base: #c0caf5;
+  --ifm-font-color-secondary: #a9b1d6;
+  --ifm-heading-color: #c0caf5;
+
+  /* Code blocks */
+  --ifm-code-background: #1a1b26;
+
+  /* Accents */
+  --tokyo-purple: #bb9af7;
+  --tokyo-cyan: #7dcfff;
+  --tokyo-green: #9ece6a;
+  --tokyo-orange: #ff9e64;
+  --tokyo-red: #f7768e;
+  --tokyo-yellow: #e0af68;
+}
+
+/* Hero section styling */
+.hero {
+  background: linear-gradient(135deg, #1a1b26 0%, #24283b 50%, #1f2335 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.hero::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(122, 162, 247, 0.1) 0%, transparent 50%);
+  animation: pulse 8s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+
+  50% {
+    transform: scale(1.1);
+    opacity: 0.8;
+  }
+}
+
+.hero__title {
+  background: linear-gradient(90deg, #7aa2f7, #bb9af7, #7dcfff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-size: 3.5rem;
+  font-weight: 800;
+}
+
+.hero__subtitle {
+  color: #a9b1d6;
+  font-size: 1.5rem;
+}
+
+/* Button styling */
+.button--primary {
+  background: linear-gradient(135deg, #7aa2f7 0%, #bb9af7 100%);
+  border: none;
+  color: #1a1b26;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(122, 162, 247, 0.3);
+}
+
+.button--primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(122, 162, 247, 0.4);
+  color: #1a1b26;
+}
+
+.button--secondary {
+  background: transparent;
+  border: 2px solid #7aa2f7;
+  color: #7aa2f7;
+  transition: all 0.3s ease;
+}
+
+.button--secondary:hover {
+  background: rgba(122, 162, 247, 0.1);
+  transform: translateY(-2px);
+}
+
+/* Feature cards */
+.feature-card {
+  background: linear-gradient(145deg, #1f2335, #24283b);
+  border-radius: 16px;
+  padding: 2rem;
+  border: 1px solid rgba(122, 162, 247, 0.2);
+  transition: all 0.3s ease;
+}
+
+.feature-card:hover {
+  transform: translateY(-5px);
+  border-color: rgba(122, 162, 247, 0.5);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+
+/* Navbar styling */
+[data-theme='dark'] .navbar {
+  border-bottom: 1px solid rgba(122, 162, 247, 0.1);
+}
+
+.navbar__logo img {
+  padding-top: 5px;
+  height: 25px;
+  width: auto;
+}
+
+/* Sidebar */
+[data-theme='dark'] .menu__link--active {
+  background: rgba(122, 162, 247, 0.1);
+  border-left: 3px solid #7aa2f7;
+}
+
+/* Code blocks with Tokyo Night */
+[data-theme='dark'] pre {
+  background: #1a1b26 !important;
+  border: 1px solid rgba(122, 162, 247, 0.1);
+}
+
+/* Scrollbar */
+[data-theme='dark'] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+[data-theme='dark'] ::-webkit-scrollbar-track {
+  background: #1a1b26;
+}
+
+[data-theme='dark'] ::-webkit-scrollbar-thumb {
+  background: #3d59a1;
+  border-radius: 4px;
+}
+
+[data-theme='dark'] ::-webkit-scrollbar-thumb:hover {
+  background: #7aa2f7;
+}
+
+/* Homepage - no scroll */
+html:has(.homepage-wrapper),
+body:has(.homepage-wrapper) {
+  overflow: hidden !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+}
+
+.homepage-wrapper {
+  height: 100vh !important;
+  max-height: 100vh !important;
+  overflow: hidden !important;
+}
+
+.homepage-wrapper main {
+  height: calc(100vh - 60px) !important;
+  max-height: calc(100vh - 60px) !important;
+  overflow: hidden !important;
+}
