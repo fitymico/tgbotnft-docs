@@ -1,0 +1,230 @@
+# License Server Taskfile
+# Управление admin и public серверами лицензий
+
+version: "3"
+
+vars:
+  PROJECT_DIR:
+    sh: pwd
+  SERVER_DIR: "{{.PROJECT_DIR}}/server"
+  DATA_DIR: "{{.PROJECT_DIR}}/data"
+  ADMIN_PID: "{{.DATA_DIR}}/admin_server.pid"
+  PUBLIC_PID: "{{.DATA_DIR}}/public_server.pid"
+
+tasks:
+  default:
+    desc: Показать справку
+    silent: true
+    cmds:
+      - echo "License Server - Task команды"
+      - echo ""
+      - echo "Управление серверами:"
+      - echo "  task start            - Запустить оба сервера"
+      - echo "  task start-admin      - Запустить admin сервер (:8081)"
+      - echo "  task start-public     - Запустить public сервер (:8080)"
+      - echo "  task stop             - Остановить оба сервера"
+      - echo "  task stop-admin       - Остановить admin сервер"
+      - echo "  task stop-public      - Остановить public сервер"
+      - echo "  task restart          - Перезапустить оба сервера"
+      - echo "  task status           - Показать статус серверов"
+      - echo "  task logs             - Показать логи"
+      - echo ""
+      - echo "Лицензии:"
+      - echo "  task license          - Создать лицензию (интерактивно)"
+      - echo "  task license-quick    - Быстрое создание лицензии"
+      - echo "  task license-list     - Показать все лицензии"
+      - echo ""
+      - echo "Установка:"
+      - echo "  task install          - Установить зависимости"
+      - echo "  task clean            - Очистить логи и PID файлы"
+
+  install:
+    desc: Установить зависимости
+    dir: "{{.SERVER_DIR}}"
+    cmds:
+      - echo "Установка зависимостей..."
+      - pip install -r requirements.txt
+      - echo "Зависимости установлены!"
+
+  start-admin:
+    desc: Запустить admin сервер (локальный, :8081)
+    cmds:
+      - echo "Запуск admin сервера..."
+      - mkdir -p {{.DATA_DIR}}
+      - |
+        if [ -f {{.ADMIN_PID}} ] && kill -0 $(cat {{.ADMIN_PID}}) 2>/dev/null; then
+          echo "Admin сервер уже запущен (PID: $(cat {{.ADMIN_PID}}))"
+        else
+          cd {{.SERVER_DIR}} && \
+          pip install -q -r requirements.txt && \
+          nohup python3 admin_server.py > {{.DATA_DIR}}/admin_server.log 2>&1 & \
+          echo $! > {{.ADMIN_PID}}
+          echo "Admin сервер запущен (PID: $(cat {{.ADMIN_PID}}))"
+          echo "Веб-интерфейс: http://127.0.0.1:8081"
+        fi
+
+  start-public:
+    desc: Запустить public сервер (валидация, :8080)
+    cmds:
+      - echo "Запуск public сервера..."
+      - mkdir -p {{.DATA_DIR}}
+      - |
+        if [ -f {{.PUBLIC_PID}} ] && kill -0 $(cat {{.PUBLIC_PID}}) 2>/dev/null; then
+          echo "Public сервер уже запущен (PID: $(cat {{.PUBLIC_PID}}))"
+        else
+          cd {{.SERVER_DIR}} && \
+          pip install -q -r requirements.txt && \
+          nohup python3 public_server.py > {{.DATA_DIR}}/public_server.log 2>&1 & \
+          echo $! > {{.PUBLIC_PID}}
+          echo "Public сервер запущен (PID: $(cat {{.PUBLIC_PID}}))"
+          echo "API: http://0.0.0.0:8080"
+        fi
+
+  start:
+    desc: Запустить оба сервера
+    cmds:
+      - task: start-admin
+      - task: start-public
+      - echo ""
+      - echo "Оба сервера запущены!"
+      - echo "  Admin:  http://127.0.0.1:8081"
+      - echo "  Public: http://0.0.0.0:8080"
+      - echo ""
+      - echo "Используйте 'task logs' для просмотра логов"
+      - echo "Используйте 'task status' для проверки статуса"
+
+  stop-admin:
+    desc: Остановить admin сервер
+    cmds:
+      - echo "Остановка admin сервера..."
+      - |
+        if [ -f {{.ADMIN_PID}} ]; then
+          PID=$(cat {{.ADMIN_PID}})
+          if kill -0 $PID 2>/dev/null; then
+            kill $PID
+            sleep 1
+            if kill -0 $PID 2>/dev/null; then
+              echo "Принудительная остановка..."
+              kill -9 $PID
+            fi
+            echo "Admin сервер остановлен"
+          else
+            echo "Admin сервер не запущен"
+          fi
+          rm -f {{.ADMIN_PID}}
+        else
+          echo "Admin сервер не запущен"
+        fi
+
+  stop-public:
+    desc: Остановить public сервер
+    cmds:
+      - echo "Остановка public сервера..."
+      - |
+        if [ -f {{.PUBLIC_PID}} ]; then
+          PID=$(cat {{.PUBLIC_PID}})
+          if kill -0 $PID 2>/dev/null; then
+            kill $PID
+            sleep 1
+            if kill -0 $PID 2>/dev/null; then
+              echo "Принудительная остановка..."
+              kill -9 $PID
+            fi
+            echo "Public сервер остановлен"
+          else
+            echo "Public сервер не запущен"
+          fi
+          rm -f {{.PUBLIC_PID}}
+        else
+          echo "Public сервер не запущен"
+        fi
+
+  stop:
+    desc: Остановить оба сервера
+    cmds:
+      - task: stop-admin
+      - task: stop-public
+      - pkill -f "python.*admin_server" 2>/dev/null || true
+      - pkill -f "python.*public_server" 2>/dev/null || true
+      - echo ""
+      - echo "Оба сервера остановлены"
+
+  restart:
+    desc: Перезапустить оба сервера
+    cmds:
+      - task: stop
+      - task: start
+      - echo "Серверы перезапущены"
+
+  status:
+    desc: Показать статус серверов
+    cmds:
+      - echo "=== Статус серверов ==="
+      - echo ""
+      - |
+        if [ -f {{.ADMIN_PID}} ] && kill -0 $(cat {{.ADMIN_PID}}) 2>/dev/null; then
+          echo "Admin сервер:  ✅ запущен (PID: $(cat {{.ADMIN_PID}})) - http://127.0.0.1:8081"
+        else
+          echo "Admin сервер:  ❌ остановлен"
+        fi
+      - |
+        if [ -f {{.PUBLIC_PID}} ] && kill -0 $(cat {{.PUBLIC_PID}}) 2>/dev/null; then
+          echo "Public сервер: ✅ запущен (PID: $(cat {{.PUBLIC_PID}})) - http://0.0.0.0:8080"
+        else
+          echo "Public сервер: ❌ остановлен"
+        fi
+      - echo ""
+
+  logs:
+    desc: Показать логи
+    cmds:
+      - echo "=== Логи серверов ==="
+      - echo ""
+      - echo "--- Admin сервер (последние 20 строк) ---"
+      - |
+        if [ -f {{.DATA_DIR}}/admin_server.log ]; then
+          tail -20 {{.DATA_DIR}}/admin_server.log
+        else
+          echo "Лог файл не найден"
+        fi
+      - echo ""
+      - echo "--- Public сервер (последние 20 строк) ---"
+      - |
+        if [ -f {{.DATA_DIR}}/public_server.log ]; then
+          tail -20 {{.DATA_DIR}}/public_server.log
+        else
+          echo "Лог файл не найден"
+        fi
+
+  license:
+    desc: Создать лицензию (интерактивно)
+    dir: "{{.SERVER_DIR}}"
+    cmds:
+      - python3 create_license.py create
+
+  license-quick:
+    desc: Быстрое создание лицензии
+    dir: "{{.SERVER_DIR}}"
+    vars:
+      DAYS: '{{.DAYS | default "30"}}'
+      INSTANCES: '{{.INSTANCES | default "1"}}'
+      NOTE: '{{.NOTE | default ""}}'
+    cmds:
+      - python3 create_license.py create-quick --days {{.DAYS}} --instances {{.INSTANCES}} --note "{{.NOTE}}"
+
+  license-list:
+    desc: Показать все лицензии
+    dir: "{{.SERVER_DIR}}"
+    cmds:
+      - python3 create_license.py list
+
+  clean:
+    desc: Очистить логи и PID файлы
+    deps: [stop]
+    cmds:
+      - echo "Очистка..."
+      - rm -f {{.DATA_DIR}}/*.log
+      - rm -f {{.DATA_DIR}}/*.pid
+      - find {{.PROJECT_DIR}} -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+      - find {{.PROJECT_DIR}} -type f -name "*.pyc" -delete 2>/dev/null || true
+      - echo "Очистка завершена"
