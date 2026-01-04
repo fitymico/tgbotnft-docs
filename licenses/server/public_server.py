@@ -61,44 +61,11 @@ async def activate_license(req: ActivateRequest, request: Request):
     if license.expires_at < datetime.now():
         raise HTTPException(status_code=403, detail="Лицензия истекла")
     
-    # Проверяем количество активных экземпляров
-    active_instances = db.get_active_instances(license.id)
-    
-    # Проверяем существующий экземпляр для этого устройства
-    existing = db.get_instance_by_instance_id(req.instance_id)
-    if existing:
-        # Проверяем что лицензия та же
-        if existing.license_id != license.id:
-            raise HTTPException(
-                status_code=403, 
-                detail="Это устройство привязано к другой лицензии"
-            )
-        
-        if existing.is_active:
-            # Уже активен - обновляем heartbeat и возвращаем токен
-            db.update_heartbeat(existing.session_token)
-            return ActivateResponse(
-                success=True,
-                session_token=existing.session_token,
-                expires_at=license.expires_at.isoformat(),
-                message="Лицензия уже активирована на этом устройстве"
-            )
-        else:
-            # Был деактивирован - реактивируем с новым токеном
-            session_token = secrets.token_hex(32)
-            db.reactivate_instance(req.instance_id, session_token, client_ip)
-            return ActivateResponse(
-                success=True,
-                session_token=session_token,
-                expires_at=license.expires_at.isoformat(),
-                message="Лицензия реактивирована"
-            )
-    
-    # Проверяем лимит экземпляров (для нового устройства)
-    if len(active_instances) >= license.max_instances:
+    # Проверяем лимит активных устройств
+    if license.active_count >= license.max_instances:
         raise HTTPException(
             status_code=403, 
-            detail=f"Достигнут лимит активных экземпляров ({license.max_instances})"
+            detail=f"Достигнут лимит активных устройств ({license.max_instances}). Деактивируйте другие устройства."
         )
     
     # Создаём новый экземпляр
@@ -111,11 +78,14 @@ async def activate_license(req: ActivateRequest, request: Request):
     )
     db.create_instance(instance)
     
+    # Увеличиваем счётчик активных устройств
+    db.increment_active_count(license.id)
+    
     return ActivateResponse(
         success=True,
         session_token=session_token,
         expires_at=license.expires_at.isoformat(),
-        message="Лицензия успешно активирована"
+        message=f"Лицензия активирована ({license.active_count + 1}/{license.max_instances})"
     )
 
 @app.post("/api/heartbeat", response_model=HeartbeatResponse)
@@ -130,6 +100,7 @@ async def heartbeat(req: HeartbeatRequest):
         raise HTTPException(status_code=404, detail="Лицензия не найдена")
     
     if license.expires_at < datetime.now():
+        db.decrement_active_count(instance.license_id)
         db.deactivate_instance(req.session_token)
         raise HTTPException(status_code=403, detail="Лицензия истекла")
     
@@ -145,6 +116,11 @@ async def heartbeat(req: HeartbeatRequest):
 @app.post("/api/deactivate")
 async def deactivate(req: HeartbeatRequest):
     """Деактивация экземпляра"""
+    # Получаем instance для определения license_id
+    instance = db.get_instance_by_token(req.session_token)
+    if instance:
+        # Уменьшаем счётчик активных устройств
+        db.decrement_active_count(instance.license_id)
     db.deactivate_instance(req.session_token)
     return {"success": True, "message": "Экземпляр деактивирован"}
 

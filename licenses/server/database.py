@@ -13,6 +13,7 @@ class License:
     expires_at: datetime
     max_instances: int = 1
     note: str = ""
+    active_count: int = 0  # Текущее количество активных устройств
     id: Optional[int] = None
     created_at: datetime = field(default_factory=datetime.now)
 
@@ -47,16 +48,23 @@ class Database:
                 license_key TEXT UNIQUE NOT NULL,
                 expires_at TIMESTAMP NOT NULL,
                 max_instances INTEGER DEFAULT 1,
+                active_count INTEGER DEFAULT 0,
                 note TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
+        # Миграция: добавляем active_count если его нет
+        try:
+            cursor.execute("ALTER TABLE licenses ADD COLUMN active_count INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # Колонка уже существует
+        
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS instances (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 license_id INTEGER REFERENCES licenses(id) ON DELETE CASCADE,
-                instance_id TEXT UNIQUE NOT NULL,
+                instance_id TEXT NOT NULL,
                 session_token TEXT UNIQUE NOT NULL,
                 ip_address TEXT DEFAULT '',
                 last_heartbeat TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -93,6 +101,7 @@ class Database:
                 license_key=row["license_key"],
                 expires_at=datetime.fromisoformat(row["expires_at"]),
                 max_instances=row["max_instances"],
+                active_count=row["active_count"] or 0,
                 note=row["note"] or "",
                 created_at=datetime.fromisoformat(row["created_at"])
             )
@@ -110,6 +119,7 @@ class Database:
                 license_key=row["license_key"],
                 expires_at=datetime.fromisoformat(row["expires_at"]),
                 max_instances=row["max_instances"],
+                active_count=row["active_count"] or 0,
                 note=row["note"] or "",
                 created_at=datetime.fromisoformat(row["created_at"])
             )
@@ -159,6 +169,32 @@ class Database:
         cursor.execute("DELETE FROM licenses WHERE id = ?", (license_id,))
         conn.commit()
         conn.close()
+    
+    def increment_active_count(self, license_id: int) -> bool:
+        """Увеличивает счётчик активных устройств на 1"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE licenses SET active_count = active_count + 1 WHERE id = ?",
+            (license_id,)
+        )
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return affected > 0
+    
+    def decrement_active_count(self, license_id: int) -> bool:
+        """Уменьшает счётчик активных устройств на 1 (но не ниже 0)"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE licenses SET active_count = MAX(0, active_count - 1) WHERE id = ?",
+            (license_id,)
+        )
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return affected > 0
     
     # ==================== Instances ====================
     
@@ -262,13 +298,13 @@ class Database:
         conn.close()
     
     def reactivate_instance(self, instance_id: str, new_session_token: str, new_ip: str) -> bool:
-        """Реактивирует неактивный экземпляр с новым session_token"""
+        """Реактивирует экземпляр с новым session_token (работает для активных и неактивных)"""
         conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE instances 
             SET is_active = 1, session_token = ?, ip_address = ?, last_heartbeat = ?
-            WHERE instance_id = ? AND is_active = 0
+            WHERE instance_id = ?
         """, (new_session_token, new_ip, datetime.now(), instance_id))
         affected = cursor.rowcount
         conn.commit()
