@@ -260,3 +260,17 @@ class Database:
         )
         conn.commit()
         conn.close()
+    
+    def reactivate_instance(self, instance_id: str, new_session_token: str, new_ip: str) -> bool:
+        """Реактивирует неактивный экземпляр с новым session_token"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE instances 
+            SET is_active = 1, session_token = ?, ip_address = ?, last_heartbeat = ?
+            WHERE instance_id = ? AND is_active = 0
+        """, (new_session_token, new_ip, datetime.now(), instance_id))
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return affected > 0

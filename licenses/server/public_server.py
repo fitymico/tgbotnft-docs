@@ -64,19 +64,37 @@ async def activate_license(req: ActivateRequest, request: Request):
     # Проверяем количество активных экземпляров
     active_instances = db.get_active_instances(license.id)
     
-    # Проверяем, не этот ли instance уже активирован
+    # Проверяем существующий экземпляр для этого устройства
     existing = db.get_instance_by_instance_id(req.instance_id)
-    if existing and existing.license_id == license.id and existing.is_active:
-        # Обновляем heartbeat и возвращаем токен
-        db.update_heartbeat(existing.session_token)
-        return ActivateResponse(
-            success=True,
-            session_token=existing.session_token,
-            expires_at=license.expires_at.isoformat(),
-            message="Лицензия уже активирована на этом устройстве"
-        )
+    if existing:
+        # Проверяем что лицензия та же
+        if existing.license_id != license.id:
+            raise HTTPException(
+                status_code=403, 
+                detail="Это устройство привязано к другой лицензии"
+            )
+        
+        if existing.is_active:
+            # Уже активен - обновляем heartbeat и возвращаем токен
+            db.update_heartbeat(existing.session_token)
+            return ActivateResponse(
+                success=True,
+                session_token=existing.session_token,
+                expires_at=license.expires_at.isoformat(),
+                message="Лицензия уже активирована на этом устройстве"
+            )
+        else:
+            # Был деактивирован - реактивируем с новым токеном
+            session_token = secrets.token_hex(32)
+            db.reactivate_instance(req.instance_id, session_token, client_ip)
+            return ActivateResponse(
+                success=True,
+                session_token=session_token,
+                expires_at=license.expires_at.isoformat(),
+                message="Лицензия реактивирована"
+            )
     
-    # Проверяем лимит экземпляров
+    # Проверяем лимит экземпляров (для нового устройства)
     if len(active_instances) >= license.max_instances:
         raise HTTPException(
             status_code=403, 
