@@ -4,6 +4,9 @@
 PROJECT_DIR := $(shell pwd)
 SERVER_DIR := $(PROJECT_DIR)/server
 DATA_DIR := $(PROJECT_DIR)/data
+VENV_DIR := $(PROJECT_DIR)/venv
+PYTHON := $(VENV_DIR)/bin/python
+PIP := $(VENV_DIR)/bin/pip
 ADMIN_PID := $(DATA_DIR)/admin_server.pid
 PUBLIC_PID := $(DATA_DIR)/public_server.pid
 
@@ -11,7 +14,7 @@ DAYS ?= 30
 INSTANCES ?= 1
 NOTE ?= 
 
-.PHONY: help install start start-admin start-public stop stop-admin stop-public restart status logs license license-quick license-list clean
+.PHONY: help venv install start start-admin start-public stop stop-admin stop-public restart status logs license license-quick license-list clean
 
 help:
 	@echo "License Server - Make команды"
@@ -33,37 +36,48 @@ help:
 	@echo "  make license-list     - Показать все лицензии"
 	@echo ""
 	@echo "Установка:"
-	@echo "  make install          - Установить зависимости"
+	@echo "  make install          - Установить зависимости (создаёт venv)"
+	@echo "  make venv             - Создать виртуальное окружение"
 	@echo "  make clean            - Очистить логи и PID файлы"
 
-install:
+venv:
+	@if [ ! -d $(VENV_DIR) ]; then \
+		echo "Создание виртуального окружения..."; \
+		python3 -m venv $(VENV_DIR); \
+		echo "Виртуальное окружение создано в $(VENV_DIR)"; \
+	else \
+		echo "Виртуальное окружение уже существует"; \
+	fi
+
+install: venv
 	@echo "Установка зависимостей..."
-	@cd $(SERVER_DIR) && pip3 install -r requirements.txt
+	@$(PIP) install --upgrade pip
+	@$(PIP) install -r $(SERVER_DIR)/requirements.txt
 	@echo "Зависимости установлены!"
 
-start-admin:
+start-admin: venv
 	@echo "Запуск admin сервера..."
 	@mkdir -p $(DATA_DIR)
 	@if [ -f $(ADMIN_PID) ] && kill -0 $$(cat $(ADMIN_PID)) 2>/dev/null; then \
 		echo "Admin сервер уже запущен (PID: $$(cat $(ADMIN_PID)))"; \
 	else \
 		cd $(SERVER_DIR) && \
-		pip3 install -q -r requirements.txt && \
-		nohup python3 admin_server.py > $(DATA_DIR)/admin_server.log 2>&1 & \
+		$(PIP) install -q -r requirements.txt && \
+		nohup $(PYTHON) admin_server.py > $(DATA_DIR)/admin_server.log 2>&1 & \
 		echo $$! > $(ADMIN_PID); \
 		echo "Admin сервер запущен (PID: $$(cat $(ADMIN_PID)))"; \
 		echo "Веб-интерфейс: http://127.0.0.1:8081"; \
 	fi
 
-start-public:
+start-public: venv
 	@echo "Запуск public сервера..."
 	@mkdir -p $(DATA_DIR)
 	@if [ -f $(PUBLIC_PID) ] && kill -0 $$(cat $(PUBLIC_PID)) 2>/dev/null; then \
 		echo "Public сервер уже запущен (PID: $$(cat $(PUBLIC_PID)))"; \
 	else \
 		cd $(SERVER_DIR) && \
-		pip3 install -q -r requirements.txt && \
-		nohup python3 public_server.py > $(DATA_DIR)/public_server.log 2>&1 & \
+		$(PIP) install -q -r requirements.txt && \
+		nohup $(PYTHON) public_server.py > $(DATA_DIR)/public_server.log 2>&1 & \
 		echo $$! > $(PUBLIC_PID); \
 		echo "Public сервер запущен (PID: $$(cat $(PUBLIC_PID)))"; \
 		echo "API: http://0.0.0.0:8080"; \
@@ -159,14 +173,17 @@ logs:
 		echo "Лог файл не найден"; \
 	fi
 
-license:
-	@cd $(SERVER_DIR) && python3 create_license.py create
+license: venv
+	@$(PIP) install -q -r $(SERVER_DIR)/requirements.txt
+	@cd $(SERVER_DIR) && $(PYTHON) create_license.py create
 
-license-quick:
-	@cd $(SERVER_DIR) && python3 create_license.py create-quick --days $(DAYS) --instances $(INSTANCES) --note "$(NOTE)"
+license-quick: venv
+	@$(PIP) install -q -r $(SERVER_DIR)/requirements.txt
+	@cd $(SERVER_DIR) && $(PYTHON) create_license.py create-quick --days $(DAYS) --instances $(INSTANCES) --note "$(NOTE)"
 
-license-list:
-	@cd $(SERVER_DIR) && python3 create_license.py list
+license-list: venv
+	@$(PIP) install -q -r $(SERVER_DIR)/requirements.txt
+	@cd $(SERVER_DIR) && $(PYTHON) create_license.py list
 
 clean: stop
 	@echo "Очистка..."
@@ -175,3 +192,8 @@ clean: stop
 	@find $(PROJECT_DIR) -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	@find $(PROJECT_DIR) -type f -name "*.pyc" -delete 2>/dev/null || true
 	@echo "Очистка завершена"
+
+full-clean: clean
+	@echo "Удаление виртуального окружения..."
+	@rm -rf $(VENV_DIR)
+	@echo "Полная очистка завершена"
