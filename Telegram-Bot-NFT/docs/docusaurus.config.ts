@@ -11,11 +11,11 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://dimopster.github.io',
-  baseUrl: '/Telegram-Bot-NFT/',
+  url: 'https://pluttan.github.io',
+  baseUrl: '/Telegram-Bot-NFT-docs/',
 
-  organizationName: 'Dimopster',
-  projectName: 'Telegram-Bot-NFT',
+  organizationName: 'pluttan',
+  projectName: 'Telegram-Bot-NFT-docs',
   trailingSlash: false,
 
   onBrokenLinks: 'throw',
@@ -31,7 +31,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/Dimopster/Telegram-Bot-NFT/tree/main/docs/',
+          editUrl: 'https://github.com/pluttan/Telegram-Bot-NFT-docs/tree/main/',
         },
         blog: false,
         theme: {
