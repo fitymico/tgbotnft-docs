@@ -38,7 +38,7 @@ help:
 
 install:
 	@echo "Установка зависимостей..."
-	@cd $(SERVER_DIR) && pip install -r requirements.txt
+	@cd $(SERVER_DIR) && pip3 install -r requirements.txt
 	@echo "Зависимости установлены!"
 
 start-admin:
@@ -48,7 +48,7 @@ start-admin:
 		echo "Admin сервер уже запущен (PID: $$(cat $(ADMIN_PID)))"; \
 	else \
 		cd $(SERVER_DIR) && \
-		pip install -q -r requirements.txt && \
+		pip3 install -q -r requirements.txt && \
 		nohup python3 admin_server.py > $(DATA_DIR)/admin_server.log 2>&1 & \
 		echo $$! > $(ADMIN_PID); \
 		echo "Admin сервер запущен (PID: $$(cat $(ADMIN_PID)))"; \
@@ -62,7 +62,7 @@ start-public:
 		echo "Public сервер уже запущен (PID: $$(cat $(PUBLIC_PID)))"; \
 	else \
 		cd $(SERVER_DIR) && \
-		pip install -q -r requirements.txt && \
+		pip3 install -q -r requirements.txt && \
 		nohup python3 public_server.py > $(DATA_DIR)/public_server.log 2>&1 & \
 		echo $$! > $(PUBLIC_PID); \
 		echo "Public сервер запущен (PID: $$(cat $(PUBLIC_PID)))"; \
