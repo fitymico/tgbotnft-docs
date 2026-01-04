@@ -12,12 +12,30 @@ import { fileURLToPath } from 'url';
 import { loginFlow, saveSession, client } from './mtprotoClient.js';
 import { getStarGifts, payStarGift, getStars } from './processWrap.js';
 import { availableMemory } from 'process';
+import { activateLicense, deactivateLicense, isLicenseActive } from './license.js';
 
 // Определяем корневую директорию проекта
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const PROJECT_ROOT = path.resolve(__dirname, '../..');
+// Для бинарника: использовать текущую рабочую директорию (process.cwd())
+// Для dev режима: использовать __dirname/../..
+// DATA_DIR из окружения имеет наивысший приоритет
+function getProjectRoot(): string {
+    if (process.env.DATA_DIR) return process.env.DATA_DIR;
+    
+    // Проверяем, запущен ли как бинарник Bun (нет __dirname или он виртуальный)
+    try {
+        const __filename = fileURLToPath(import.meta.url);
+        const __dirname = path.dirname(__filename);
+        // Если путь начинается с /$bunfs - это бинарник
+        if (__dirname.startsWith('/$bunfs') || __dirname === '/') {
+            return process.cwd();
+        }
+        return path.resolve(__dirname, '../..');
+    } catch {
+        return process.cwd();
+    }
+}
 
+const PROJECT_ROOT = getProjectRoot();
 dotenv.config({ path: path.join(PROJECT_ROOT, '.env') });
 
 const targetPeer = await client.getInputEntity('me');
@@ -117,14 +135,22 @@ function starsToNumber(starsObj: any): number {
 const LOG_DIR = path.join(PROJECT_ROOT, "data");
 const LOG_FILE = path.join(LOG_DIR, "bot.log");
 
+function getTimestamp(): string {
+    const now = new Date();
+    const hours = now.getHours().toString().padStart(2, '0');
+    const minutes = now.getMinutes().toString().padStart(2, '0');
+    const seconds = now.getSeconds().toString().padStart(2, '0');
+    return `[${hours}:${minutes}:${seconds}]`;
+}
+
 function debugLog(message: string): void {
     // Выводим только в консоль (не записываем в файл)
-    console.log(message);
+    console.log(`${getTimestamp()} ${message}`);
 }
 
 function logPurchase(message: string): void {
     // Выводим в консоль
-    console.log(message);
+    console.log(`${getTimestamp()} ${message}`);
     
     // Записываем в файл лога
     try {
@@ -409,6 +435,19 @@ async function processFullCycle(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+    // Проверка лицензии
+    const licenseKey = process.env.LICENSE_KEY;
+    if (licenseKey) {
+        console.log("[LICENSE] Проверка лицензии...");
+        const activated = await activateLicense(licenseKey);
+        if (!activated) {
+            console.error("[LICENSE] Не удалось активировать лицензию. Завершение.");
+            process.exit(1);
+        }
+    } else {
+        console.log("[LICENSE] LICENSE_KEY не задан, работа без лицензии (для разработки)");
+    }
+    
     try {
         await client.connect();
         console.log("--- Подключение выполнено ---");
@@ -425,6 +464,8 @@ async function main(): Promise<void> {
         }
     } catch (err) {
         console.error("Не удалось подключиться:", err);
+    } finally {
+        await deactivateLicense();
     }
     return
 }

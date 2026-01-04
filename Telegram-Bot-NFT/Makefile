@@ -20,7 +20,10 @@ GIFTBOT_PID := $(PROJECT_DIR)/data/giftbot.pid
         start start-talkbot start-giftbot \
         stop stop-talkbot stop-giftbot \
         restart status logs \
-        docker-build docker-up docker-down docker-logs docker-restart
+        docker-build docker-up docker-down docker-logs docker-restart \
+        build-bin build-bin-deps \
+        license license-quick license-list license-admin license-public \
+        docs docs-build docs-install
 
 # ================== Справка ==================
 help:
@@ -58,6 +61,19 @@ help:
 	@echo "Прочее:"
 	@echo "  make clean            - Удалить виртуальное окружение и кэш"
 	@echo "  make full-clean       - Полная очистка (логи, node_modules, dist)"
+	@echo "  make build-bin        - Собрать бинарники для распространения"
+	@echo ""
+	@echo "Лицензии:"
+	@echo "  make license          - Создать лицензию (интерактивно)"
+	@echo "  make license-quick    - Быстрое создание (DAYS=30 INSTANCES=1 NOTE='')"
+	@echo "  make license-list     - Показать все лицензии"
+	@echo "  make license-admin    - Запустить admin сервер (локальный, :8081)"
+	@echo "  make license-public   - Запустить public сервер (валидация, :8080)"
+	@echo ""
+	@echo "Документация:"
+	@echo "  make docs             - Запустить Docusaurus dev-сервер"
+	@echo "  make docs-install     - Установить зависимости документации"
+	@echo "  make docs-build       - Собрать статическую документацию"
 	@echo ""
 	@echo "Перед запуском создайте файл .env (см. .env.example)"
 
@@ -276,3 +292,125 @@ full-clean: stop clean
 	@echo ""
 	@echo "✅ Полная очистка завершена"
 	@echo "Для переустановки выполните: make install"
+
+# ================== Сборка бинарников ==================
+VERSION := $(shell cat .version 2>/dev/null || echo "0.0.0")
+RELEASE_DIR := $(PROJECT_DIR)/releases/v$(VERSION)
+
+build-bin-deps:
+	@echo "📦 Установка зависимостей для сборки..."
+	$(PIP) install pyinstaller
+	@if ! command -v bun &> /dev/null; then \
+		echo "Установка bun..."; \
+		curl -fsSL https://bun.sh/install | bash; \
+	fi
+
+build-bin: install build-bin-deps
+	@echo ""
+	@echo "📦 Сборка бинарников v$(VERSION)..."
+	@echo ""
+	@# Создаём структуру директорий
+	mkdir -p $(RELEASE_DIR)/linux/data
+	mkdir -p $(RELEASE_DIR)/macos/data
+	mkdir -p $(RELEASE_DIR)/windows/data
+	@# Копируем .env.example
+	cp $(PROJECT_DIR)/.env.example $(RELEASE_DIR)/linux/
+	cp $(PROJECT_DIR)/.env.example $(RELEASE_DIR)/macos/
+	cp $(PROJECT_DIR)/.env.example $(RELEASE_DIR)/windows/
+	@# Копируем LICENSE
+	cp $(PROJECT_DIR)/LICENSE $(RELEASE_DIR)/linux/
+	cp $(PROJECT_DIR)/LICENSE $(RELEASE_DIR)/macos/
+	cp $(PROJECT_DIR)/LICENSE $(RELEASE_DIR)/windows/
+	cp $(PROJECT_DIR)/LICENSE.ru $(RELEASE_DIR)/linux/
+	cp $(PROJECT_DIR)/LICENSE.ru $(RELEASE_DIR)/macos/
+	cp $(PROJECT_DIR)/LICENSE.ru $(RELEASE_DIR)/windows/
+	@# Копируем шаблон status.json
+	echo '{"is_running":false,"status_text":"Бот остановлен","distribution":"<1000 10","iterations_total":100,"iteration_current":0,"delay":1000}' > $(RELEASE_DIR)/linux/data/status.json
+	echo '{"is_running":false,"status_text":"Бот остановлен","distribution":"<1000 10","iterations_total":100,"iteration_current":0,"delay":1000}' > $(RELEASE_DIR)/macos/data/status.json
+	echo '{"is_running":false,"status_text":"Бот остановлен","distribution":"<1000 10","iterations_total":100,"iteration_current":0,"delay":1000}' > $(RELEASE_DIR)/windows/data/status.json
+	@# Создаём пустой giftID.json
+	echo '[]' > $(RELEASE_DIR)/linux/data/giftID.json
+	echo '[]' > $(RELEASE_DIR)/macos/data/giftID.json
+	echo '[]' > $(RELEASE_DIR)/windows/data/giftID.json
+	@echo ""
+	@echo "🐍 Сборка Python бота..."
+	cd $(MESSAGE_BOT_DIR) && \
+		$(PROJECT_DIR)/$(PYTHON) -m PyInstaller --onefile --clean \
+		--name talkbot \
+		--distpath $(RELEASE_DIR)/linux \
+		--add-data "../config.py:." \
+		talkbot.py
+	@echo ""
+	@echo "🟢 Сборка Node.js бота с Bun..."
+	@# Сборка для Linux
+	cd $(GIFT_API_DIR) && bun build src/giftBot.ts --compile --target=bun-linux-x64 --outfile $(RELEASE_DIR)/linux/giftBot
+	@# Сборка для macOS
+	cd $(GIFT_API_DIR) && bun build src/giftBot.ts --compile --target=bun-darwin-x64 --outfile $(RELEASE_DIR)/macos/giftBot-x64
+	cd $(GIFT_API_DIR) && bun build src/giftBot.ts --compile --target=bun-darwin-arm64 --outfile $(RELEASE_DIR)/macos/giftBot-arm64
+	@# Сборка для Windows
+	cd $(GIFT_API_DIR) && bun build src/giftBot.ts --compile --target=bun-windows-x64 --outfile $(RELEASE_DIR)/windows/giftBot.exe
+	@# Копируем в latest
+	@echo ""
+	@echo "📋 Копирование в releases/latest..."
+	rm -rf $(PROJECT_DIR)/releases/latest
+	cp -r $(RELEASE_DIR) $(PROJECT_DIR)/releases/latest
+	@echo ""
+	@echo "✅ Сборка завершена!"
+	@echo "Релизы в: $(RELEASE_DIR)/"
+	@echo "Latest:   $(PROJECT_DIR)/releases/latest/"
+	@echo ""
+	@ls -la $(RELEASE_DIR)/
+
+# ================== Лицензии ==================
+LICENSE_DIR := $(PROJECT_DIR)/licenses/server
+LICENSE_DB := $(LICENSE_DIR)/licenses.db
+
+# Интерактивное создание лицензии
+license:
+	@cd $(LICENSE_DIR) && python3 create_license.py create
+
+# Быстрое создание с параметрами
+license-quick:
+	@cd $(LICENSE_DIR) && python3 create_license.py create-quick --days $(or $(DAYS),30) --instances $(or $(INSTANCES),1) --note "$(or $(NOTE),)"
+
+# Список лицензий
+license-list:
+	@cd $(LICENSE_DIR) && python3 create_license.py list
+
+# Admin сервер (ТОЛЬКО для локальной сети!)
+license-admin:
+	@echo ""
+	@echo "⚠️  ADMIN SERVER - ТОЛЬКО ДЛЯ ЛОКАЛЬНОЙ СЕТИ!"
+	@echo "Веб-интерфейс: http://127.0.0.1:8081"
+	@echo ""
+	cd $(LICENSE_DIR) && pip install -q -r requirements.txt && python3 admin_server.py
+
+# Public сервер (для валидации лицензий в интернете)
+license-public:
+	@echo ""
+	@echo "🌐 PUBLIC SERVER - для валидации лицензий"
+	@echo "API: http://0.0.0.0:8080"
+	@echo ""
+	cd $(LICENSE_DIR) && pip install -q -r requirements.txt && python3 public_server.py
+
+# ================== Документация ==================
+DOCS_DIR := $(PROJECT_DIR)/docs
+
+docs-install:
+	@echo "📚 Установка зависимостей документации..."
+	cd $(DOCS_DIR) && npm install
+	@echo "✅ Зависимости документации установлены!"
+
+docs: docs-install
+	@echo ""
+	@echo "📚 Запуск Docusaurus dev-сервера..."
+	@echo "Документация: http://localhost:3000"
+	@echo ""
+	cd $(DOCS_DIR) && npm start
+
+docs-build: docs-install
+	@echo ""
+	@echo "📚 Сборка статической документации..."
+	cd $(DOCS_DIR) && npm run build
+	@echo ""
+	@echo "✅ Документация собрана в $(DOCS_DIR)/build/"

@@ -1,0 +1,333 @@
+/* Homepage layout */
+.layoutWrapper {
+  height: 100vh !important;
+  overflow: hidden !important;
+}
+
+.layoutWrapper nav {
+  display: none !important;
+}
+
+.layoutWrapper main {
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.hero {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1a1b26 0%, #24283b 50%, #1f2335 100%);
+  position: relative;
+  overflow: hidden;
+  padding: 2rem;
+}
+
+/* Light theme hero */
+:global([data-theme='light']) .hero {
+  background: linear-gradient(135deg, #e1e2e7 0%, #d5d6db 50%, #e9e9ec 100%);
+}
+
+/* Gradient overlay */
+.hero::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(122, 162, 247, 0.08) 0%, transparent 40%),
+    radial-gradient(circle at 70% 80%, rgba(187, 154, 247, 0.06) 0%, transparent 40%);
+  animation: floatBg 15s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes floatBg {
+
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+
+  33% {
+    transform: translate(2%, 2%) rotate(1deg);
+  }
+
+  66% {
+    transform: translate(-1%, 1%) rotate(-1deg);
+  }
+}
+
+.heroInner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4rem;
+  max-width: 1200px;
+  width: 100%;
+  z-index: 1;
+}
+
+.heroContent {
+  flex: 1;
+  max-width: 600px;
+}
+
+.heroTitle {
+  font-size: 3.5rem;
+  font-weight: 800;
+  margin-bottom: 1rem;
+  line-height: 1.1;
+  background: linear-gradient(135deg, #7aa2f7 0%, #bb9af7 50%, #7dcfff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.heroSubtitle {
+  font-size: 1.4rem;
+  color: #a9b1d6;
+  margin-bottom: 2rem;
+  line-height: 1.5;
+}
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  margin-bottom: 2.5rem;
+}
+
+.featureItem {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #c0caf5;
+  font-size: 1rem;
+}
+
+.featureIcon {
+  font-size: 1.5rem;
+  color: #7aa2f7;
+  flex-shrink: 0;
+}
+
+.buttons {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.primaryButton {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.875rem 2rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #1a1b26;
+  background: linear-gradient(135deg, #7aa2f7 0%, #bb9af7 100%);
+  border-radius: 12px;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 20px rgba(122, 162, 247, 0.3);
+}
+
+.primaryButton:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 30px rgba(122, 162, 247, 0.4);
+  color: #1a1b26;
+  text-decoration: none;
+}
+
+.secondaryButton {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.875rem 2rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #7aa2f7;
+  background: transparent;
+  border: 2px solid #7aa2f7;
+  border-radius: 12px;
+  text-decoration: none;
+  transition: all 0.3s ease;
+}
+
+.secondaryButton:hover {
+  background: rgba(122, 162, 247, 0.1);
+  transform: translateY(-3px);
+  color: #7aa2f7;
+  text-decoration: none;
+}
+
+.heroVisual {
+  flex: 1;
+  max-width: 500px;
+}
+
+.codeBlock {
+  background: #1a1b26;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(122, 162, 247, 0.2);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.codeHeader {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #16161e;
+  border-bottom: 1px solid rgba(122, 162, 247, 0.1);
+}
+
+.codeDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+/* Override CodeBlock styles inside codeBlock */
+.codeBlock pre {
+  margin: 0 !important;
+  border-radius: 0 0 16px 16px !important;
+  background: transparent !important;
+  border: none !important;
+}
+
+.codeBlock code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-size: 0.9rem !important;
+}
+
+/* Remove default CodeBlock wrapper styles */
+.codeBlock>div {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Mobile responsive */
+@media (max-width: 996px) {
+  .heroInner {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .heroTitle {
+    font-size: 2.5rem;
+  }
+
+  .heroSubtitle {
+    font-size: 1.2rem;
+  }
+
+  .features {
+    justify-content: center;
+  }
+
+  .buttons {
+    justify-content: center;
+  }
+
+  .heroVisual {
+    width: 100%;
+  }
+}
+
+@media (max-width: 600px) {
+  .heroTitle {
+    font-size: 2rem;
+  }
+
+  .features {
+    grid-template-columns: 1fr;
+  }
+
+  .buttons {
+    flex-direction: column;
+  }
+
+  .primaryButton,
+  .secondaryButton {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Copyright */
+.copyright {
+  position: absolute;
+  bottom: 4rem;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #565f89;
+  font-size: 0.8rem;
+  z-index: 1;
+}
+
+/* ========== Light Theme Overrides ========== */
+:global([data-theme='light']) .heroTitle {
+  background: linear-gradient(135deg, #2e7de9 0%, #9854f1 50%, #007197 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+:global([data-theme='light']) .heroSubtitle {
+  color: #6172b0;
+}
+
+:global([data-theme='light']) .featureItem {
+  color: #3760bf;
+}
+
+:global([data-theme='light']) .featureIcon {
+  color: #2e7de9;
+}
+
+:global([data-theme='light']) .primaryButton {
+  background: linear-gradient(135deg, #2e7de9 0%, #9854f1 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 20px rgba(46, 125, 233, 0.3);
+}
+
+:global([data-theme='light']) .primaryButton:hover {
+  color: #ffffff;
+  box-shadow: 0 8px 30px rgba(46, 125, 233, 0.4);
+}
+
+:global([data-theme='light']) .secondaryButton {
+  color: #2e7de9;
+  border-color: #2e7de9;
+}
+
+:global([data-theme='light']) .secondaryButton:hover {
+  background: rgba(46, 125, 233, 0.1);
+  color: #2e7de9;
+}
+
+:global([data-theme='light']) .codeBlock {
+  background: #e9e9ec;
+  border-color: rgba(46, 125, 233, 0.2);
+}
+
+:global([data-theme='light']) .codeHeader {
+  background: #d5d6db;
+  border-color: rgba(46, 125, 233, 0.1);
+}
+
+:global([data-theme='light']) .codeContent {
+  color: #3760bf;
+}
+
+:global([data-theme='light']) .copyright {
+  color: #6172b0;
+}

@@ -57,3 +57,9 @@ data/status.json
 *.pid.lock
 coverage/
 .nyc_output/
+
+# ================== Сборка бинарников ==================
+releases/
+*.spec
+Message_Bot/build/
+Message_Bot/dist/

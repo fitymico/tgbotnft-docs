@@ -3,20 +3,35 @@ import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Определяем корневую директорию проекта
+function getProjectRoot(): string {
+    if (process.env.DATA_DIR) return process.env.DATA_DIR;
+    
+    try {
+        const __filename = fileURLToPath(import.meta.url);
+        const __dirname = path.dirname(__filename);
+        // Если путь виртуальный (Bun бинарник) - используем cwd
+        if (__dirname.startsWith('/$bunfs') || __dirname === '/') {
+            return process.cwd();
+        }
+        return path.resolve(__dirname, "../..");
+    } catch {
+        return process.cwd();
+    }
+}
 
-// Корневая директория проекта
-const PROJECT_ROOT = path.resolve(__dirname, "../..");
+const PROJECT_ROOT = getProjectRoot();
 dotenv.config({ path: path.join(PROJECT_ROOT, ".env") });
 
 import { TelegramClient, Api } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 
-const SESSIONFILE = path.join(PROJECT_ROOT, "data/session.session");
+// Сессия может быть из .env (SESSION_STRING) или из файла
+let sessionString = process.env.SESSION_STRING || '';
 
-let sessionString = '';
-if (fs.existsSync(SESSIONFILE)) {
+// Если SESSION_STRING не задан, пробуем загрузить из файла
+const SESSIONFILE = path.join(PROJECT_ROOT, "data/session.session");
+if (!sessionString && fs.existsSync(SESSIONFILE)) {
     sessionString = fs.readFileSync(SESSIONFILE, 'utf8');
 }
 
@@ -36,8 +51,18 @@ export const client = new TelegramClient(STRINGSESSION, API_ID, API_HASH, {
 
 export async function saveSession(): Promise<void> {
     const NEWSESSION = STRINGSESSION.save();
-    fs.writeFileSync(SESSIONFILE, NEWSESSION, 'utf8');
-    console.log("Текущая сессия сохранена в ", SESSIONFILE);
+    
+    // Сохраняем в файл если есть директория data
+    const dataDir = path.join(PROJECT_ROOT, "data");
+    if (fs.existsSync(dataDir)) {
+        fs.writeFileSync(SESSIONFILE, NEWSESSION, 'utf8');
+        console.log("Сессия сохранена в файл:", SESSIONFILE);
+    }
+    
+    // Выводим сессию для .env если запущен без файла
+    console.log("\n=== SESSION_STRING для .env ===");
+    console.log(NEWSESSION);
+    console.log("================================\n");
     return;
 }
 

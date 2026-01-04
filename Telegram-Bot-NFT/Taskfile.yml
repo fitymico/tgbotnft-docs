@@ -1,0 +1,475 @@
+# Telegram-Bot-NFT Taskfile
+# Управление Python ботом и TypeScript API
+
+version: "3"
+
+vars:
+  VENV: venv
+  PYTHON: "{{.VENV}}/bin/python"
+  PIP: "{{.VENV}}/bin/pip"
+  PROJECT_DIR:
+    sh: pwd
+  MESSAGE_BOT_DIR: "{{.PROJECT_DIR}}/Message_Bot"
+  GIFT_API_DIR: "{{.PROJECT_DIR}}/Gift_API"
+  SCRIPTS_DIR: "{{.PROJECT_DIR}}/scripts"
+  TALKBOT_PID: "{{.PROJECT_DIR}}/data/talkbot.pid"
+  GIFTBOT_PID: "{{.PROJECT_DIR}}/data/giftbot.pid"
+  DOCKER_DIR: "{{.PROJECT_DIR}}/docker"
+  LICENSE_DIR: "{{.PROJECT_DIR}}/licenses/server"
+  DOCS_DIR: "{{.PROJECT_DIR}}/docs"
+  VERSION:
+    sh: cat .version 2>/dev/null || echo "0.0.0"
+  RELEASE_DIR: "{{.PROJECT_DIR}}/releases/v{{.VERSION}}"
+
+tasks:
+  default:
+    desc: Показать справку
+    silent: true
+    cmds:
+      - echo "Telegram-Bot-NFT - Task команды"
+      - echo ""
+      - echo "Быстрый старт:"
+      - echo "  task all              - Установить зависимости и запустить бота"
+      - echo ""
+      - echo "Установка:"
+      - echo "  task install          - Установить все зависимости"
+      - echo "  task install-python   - Установить только Python зависимости"
+      - echo "  task install-node     - Установить только Node.js зависимости"
+      - echo "  task venv             - Создать виртуальное окружение Python"
+      - echo ""
+      - echo "Управление ботами:"
+      - echo "  task start            - Запустить все боты"
+      - echo "  task start-talkbot    - Запустить только Telegram бот"
+      - echo "  task start-giftbot    - Запустить только Gift API бот"
+      - echo "  task stop             - Остановить все боты"
+      - echo "  task stop-talkbot     - Остановить Telegram бот"
+      - echo "  task stop-giftbot     - Остановить Gift API бот"
+      - echo "  task restart          - Перезапустить все боты"
+      - echo "  task status           - Показать статус ботов"
+      - echo "  task logs             - Показать логи"
+      - echo ""
+      - echo "Docker:"
+      - echo "  task docker-build     - Собрать Docker образ"
+      - echo "  task docker-up        - Запустить в Docker"
+      - echo "  task docker-down      - Остановить Docker"
+      - echo "  task docker-logs      - Логи Docker"
+      - echo "  task docker-restart   - Перезапустить Docker"
+      - echo ""
+      - echo "Прочее:"
+      - echo "  task clean            - Удалить виртуальное окружение и кэш"
+      - echo "  task full-clean       - Полная очистка"
+      - echo "  task build-bin        - Собрать бинарники"
+      - echo ""
+      - echo "Лицензии:"
+      - echo "  task license          - Создать лицензию"
+      - echo "  task license-quick    - Быстрое создание"
+      - echo "  task license-list     - Показать все лицензии"
+      - echo "  task license-admin    - Запустить admin сервер"
+      - echo "  task license-public   - Запустить public сервер"
+      - echo ""
+      - echo "Документация:"
+      - echo "  task docs             - Запустить Docusaurus dev-сервер"
+      - echo "  task docs-install     - Установить зависимости документации"
+      - echo "  task docs-build       - Собрать статическую документацию"
+      - echo ""
+      - echo "Перед запуском создайте файл .env (см. .env.example)"
+
+  all:
+    desc: Установить зависимости и запустить бота
+    deps: [install]
+    cmds:
+      - task: start
+      - echo "Бот установлен и запущен!"
+
+  docker-build:
+    desc: Собрать Docker образ
+    cmds:
+      - echo "Сборка Docker образа..."
+      - docker compose -f {{.DOCKER_DIR}}/docker-compose.yml build
+
+  docker-up:
+    desc: Запустить в Docker
+    deps: [docker-build]
+    cmds:
+      - echo "Запуск в Docker..."
+      - docker compose -f {{.DOCKER_DIR}}/docker-compose.yml up -d
+      - echo "Бот запущен в Docker!"
+
+  docker-down:
+    desc: Остановить Docker
+    cmds:
+      - echo "Остановка Docker..."
+      - docker compose -f {{.DOCKER_DIR}}/docker-compose.yml down
+      - echo "Docker остановлен"
+
+  docker-logs:
+    desc: Логи Docker
+    cmds:
+      - docker compose -f {{.DOCKER_DIR}}/docker-compose.yml logs -f --tail=50
+
+  docker-restart:
+    desc: Перезапустить Docker
+    cmds:
+      - task: docker-down
+      - task: docker-up
+      - echo "Docker перезапущен"
+
+  venv:
+    desc: Создать виртуальное окружение Python
+    cmds:
+      - echo "Создание виртуального окружения..."
+      - |
+        if [ -d {{.VENV}} ]; then
+          if {{.PYTHON}} --version 2>&1 | grep -q "Python 2"; then
+            echo "Обнаружен Python 2 в venv, пересоздаём..."
+            rm -rf {{.VENV}}
+          fi
+        fi
+        if [ ! -d {{.VENV}} ]; then
+          python3 -m venv {{.VENV}}
+          echo "Виртуальное окружение создано в {{.VENV}}/"
+        else
+          echo "Виртуальное окружение уже существует"
+        fi
+
+  install-python:
+    desc: Установить только Python зависимости
+    deps: [venv]
+    cmds:
+      - echo "Установка Python зависимостей..."
+      - "{{.PIP}} install --upgrade pip"
+      - "{{.PIP}} install -r requirements.txt"
+      - echo "Python зависимости установлены!"
+
+  install-node:
+    desc: Установить только Node.js зависимости
+    dir: "{{.GIFT_API_DIR}}"
+    cmds:
+      - echo "Установка Node.js зависимостей..."
+      - npm install
+      - echo "Node.js зависимости установлены!"
+
+  install:
+    desc: Установить все зависимости (Python + Node.js)
+    deps: [install-python, install-node]
+    cmds:
+      - echo ""
+      - echo "Все зависимости установлены!"
+      - "echo 'Запустите: task start'"
+
+  start-talkbot:
+    desc: Запустить только Telegram бот (aiogram)
+    cmds:
+      - echo "Запуск Telegram бота..."
+      - mkdir -p {{.PROJECT_DIR}}/data
+      - |
+        if [ -f {{.TALKBOT_PID}} ] && kill -0 $(cat {{.TALKBOT_PID}}) 2>/dev/null; then
+          echo "Telegram бот уже запущен (PID: $(cat {{.TALKBOT_PID}}))"
+        else
+          cd {{.MESSAGE_BOT_DIR}} && \
+          source {{.PROJECT_DIR}}/{{.VENV}}/bin/activate && \
+          set -a && source {{.PROJECT_DIR}}/.env && set +a && \
+          nohup {{.PROJECT_DIR}}/{{.PYTHON}} talkbot.py > {{.PROJECT_DIR}}/data/talkbot.log 2>&1 & \
+          echo $! > {{.TALKBOT_PID}}
+          echo "Telegram бот запущен (PID: $(cat {{.TALKBOT_PID}}))"
+        fi
+
+  start-giftbot:
+    desc: Запустить только Gift API бот
+    cmds:
+      - echo "Запуск Gift API бота..."
+      - mkdir -p {{.PROJECT_DIR}}/data
+      - |
+        if [ -f {{.GIFTBOT_PID}} ] && kill -0 $(cat {{.GIFTBOT_PID}}) 2>/dev/null; then
+          echo "Gift API бот уже запущен (PID: $(cat {{.GIFTBOT_PID}}))"
+        else
+          cd {{.GIFT_API_DIR}} && \
+          set -a && source {{.PROJECT_DIR}}/.env && set +a && \
+          nohup npm run dev > {{.PROJECT_DIR}}/data/giftbot.log 2>&1 & \
+          echo $! > {{.GIFTBOT_PID}}
+          echo "Gift API бот запущен (PID: $(cat {{.GIFTBOT_PID}}))"
+        fi
+
+  start:
+    desc: Запустить все боты
+    deps: [start-talkbot]
+    cmds:
+      - echo ""
+      - echo "Боты запущены!"
+      - echo "Используйте 'task logs' для просмотра логов"
+      - echo "Используйте 'task status' для проверки статуса"
+
+  stop-talkbot:
+    desc: Остановить Telegram бот
+    cmds:
+      - echo "Остановка Telegram бота..."
+      - |
+        if [ -f {{.TALKBOT_PID}} ]; then
+          PID=$(cat {{.TALKBOT_PID}})
+          if kill -0 $PID 2>/dev/null; then
+            kill $PID
+            sleep 1
+            if kill -0 $PID 2>/dev/null; then
+              echo "Принудительная остановка..."
+              kill -9 $PID
+            fi
+            echo "Telegram бот остановлен"
+          else
+            echo "Telegram бот не запущен"
+          fi
+          rm -f {{.TALKBOT_PID}}
+        else
+          echo "Telegram бот не запущен"
+        fi
+
+  stop-giftbot:
+    desc: Остановить Gift API бот
+    cmds:
+      - echo "Остановка Gift API бота..."
+      - |
+        if [ -f {{.GIFTBOT_PID}} ]; then
+          PID=$(cat {{.GIFTBOT_PID}})
+          if kill -0 $PID 2>/dev/null; then
+            kill $PID
+            sleep 1
+            if kill -0 $PID 2>/dev/null; then
+              echo "Принудительная остановка..."
+              kill -9 $PID
+            fi
+            echo "Gift API бот остановлен"
+          else
+            echo "Gift API бот не запущен"
+          fi
+          rm -f {{.GIFTBOT_PID}}
+        else
+          echo "Gift API бот не запущен"
+        fi
+      - pkill -f "node.*giftBot" 2>/dev/null || true
+
+  stop:
+    desc: Остановить все боты
+    deps: [stop-talkbot, stop-giftbot]
+    cmds:
+      - pkill -f "python.*talkbot" 2>/dev/null || true
+      - pkill -f "node.*giftBot" 2>/dev/null || true
+      - echo ""
+      - echo "Все боты остановлены"
+
+  restart:
+    desc: Перезапустить все боты
+    cmds:
+      - task: stop
+      - task: start
+      - echo "Боты перезапущены"
+
+  status:
+    desc: Показать статус ботов
+    cmds:
+      - echo "=== Статус ботов ==="
+      - echo ""
+      - |
+        if [ -f {{.TALKBOT_PID}} ] && kill -0 $(cat {{.TALKBOT_PID}}) 2>/dev/null; then
+          echo "Telegram бот: запущен (PID: $(cat {{.TALKBOT_PID}}))"
+        else
+          echo "Telegram бот: остановлен"
+        fi
+      - |
+        if [ -f {{.GIFTBOT_PID}} ] && kill -0 $(cat {{.GIFTBOT_PID}}) 2>/dev/null; then
+          echo "Gift API бот: запущен (PID: $(cat {{.GIFTBOT_PID}}))"
+        else
+          echo "Gift API бот: остановлен"
+        fi
+      - echo ""
+
+  logs:
+    desc: Показать логи
+    cmds:
+      - echo "=== Логи ботов ==="
+      - echo ""
+      - echo "--- Telegram бот (последние 20 строк) ---"
+      - |
+        if [ -f {{.PROJECT_DIR}}/data/talkbot.log ]; then
+          tail -20 {{.PROJECT_DIR}}/data/talkbot.log
+        else
+          echo "Лог файл не найден"
+        fi
+      - echo ""
+      - echo "--- Gift API бот (последние 20 строк) ---"
+      - |
+        if [ -f {{.PROJECT_DIR}}/data/giftbot.log ]; then
+          tail -20 {{.PROJECT_DIR}}/data/giftbot.log
+        else
+          echo "Лог файл не найден"
+        fi
+      - echo ""
+      - echo "--- Лог покупок (последние 20 строк) ---"
+      - |
+        if [ -f {{.PROJECT_DIR}}/data/bot.log ]; then
+          tail -20 {{.PROJECT_DIR}}/data/bot.log
+        else
+          echo "Лог файл не найден"
+        fi
+
+  clean:
+    desc: Удалить виртуальное окружение и кэш
+    cmds:
+      - echo "Очистка..."
+      - rm -rf {{.VENV}}
+      - rm -rf {{.MESSAGE_BOT_DIR}}/__pycache__
+      - rm -rf {{.PROJECT_DIR}}/__pycache__
+      - find {{.PROJECT_DIR}} -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+      - find {{.PROJECT_DIR}} -type f -name "*.pyc" -delete 2>/dev/null || true
+      - echo "Очистка завершена"
+
+  full-clean:
+    desc: Полная очистка (логи, node_modules, dist)
+    deps: [stop]
+    cmds:
+      - task: clean
+      - echo "Полная очистка..."
+      - rm -f {{.PROJECT_DIR}}/data/*.log
+      - rm -f {{.PROJECT_DIR}}/data/*.pid
+      - rm -rf {{.GIFT_API_DIR}}/node_modules
+      - rm -rf {{.GIFT_API_DIR}}/dist
+      - echo ""
+      - echo "Полная очистка завершена"
+      - "echo 'Для переустановки выполните: task install'"
+
+  build-bin-deps:
+    desc: Установить зависимости для сборки
+    cmds:
+      - echo "Установка зависимостей для сборки..."
+      - "{{.PIP}} install pyinstaller"
+      - |
+        if ! command -v bun &> /dev/null; then
+          echo "Установка bun..."
+          curl -fsSL https://bun.sh/install | bash
+        fi
+
+  build-bin:
+    desc: Собрать бинарники для распространения
+    deps: [install, build-bin-deps]
+    cmds:
+      - echo ""
+      - echo "Сборка бинарников v{{.VERSION}}..."
+      - echo ""
+      - mkdir -p {{.RELEASE_DIR}}/linux/data
+      - mkdir -p {{.RELEASE_DIR}}/macos/data
+      - mkdir -p {{.RELEASE_DIR}}/windows/data
+      - cp {{.PROJECT_DIR}}/.env.example {{.RELEASE_DIR}}/linux/
+      - cp {{.PROJECT_DIR}}/.env.example {{.RELEASE_DIR}}/macos/
+      - cp {{.PROJECT_DIR}}/.env.example {{.RELEASE_DIR}}/windows/
+      - cp {{.PROJECT_DIR}}/LICENSE {{.RELEASE_DIR}}/linux/
+      - cp {{.PROJECT_DIR}}/LICENSE {{.RELEASE_DIR}}/macos/
+      - cp {{.PROJECT_DIR}}/LICENSE {{.RELEASE_DIR}}/windows/
+      - cp {{.PROJECT_DIR}}/LICENSE.ru {{.RELEASE_DIR}}/linux/
+      - cp {{.PROJECT_DIR}}/LICENSE.ru {{.RELEASE_DIR}}/macos/
+      - cp {{.PROJECT_DIR}}/LICENSE.ru {{.RELEASE_DIR}}/windows/
+      - |
+        cat > {{.RELEASE_DIR}}/linux/data/status.json << 'EOF'
+        {"is_running":false,"status_text":"Бот остановлен","distribution":"<1000 10","iterations_total":100,"iteration_current":0,"delay":1000}
+        EOF
+      - |
+        cat > {{.RELEASE_DIR}}/macos/data/status.json << 'EOF'
+        {"is_running":false,"status_text":"Бот остановлен","distribution":"<1000 10","iterations_total":100,"iteration_current":0,"delay":1000}
+        EOF
+      - |
+        cat > {{.RELEASE_DIR}}/windows/data/status.json << 'EOF'
+        {"is_running":false,"status_text":"Бот остановлен","distribution":"<1000 10","iterations_total":100,"iteration_current":0,"delay":1000}
+        EOF
+      - echo "[]" > {{.RELEASE_DIR}}/linux/data/giftID.json
+      - echo "[]" > {{.RELEASE_DIR}}/macos/data/giftID.json
+      - echo "[]" > {{.RELEASE_DIR}}/windows/data/giftID.json
+      - echo ""
+      - echo "Сборка Python бота..."
+      - cd {{.MESSAGE_BOT_DIR}} && {{.PROJECT_DIR}}/{{.PYTHON}} -m PyInstaller --onefile --clean --name talkbot --distpath {{.RELEASE_DIR}}/linux --add-data "../config.py:." talkbot.py
+      - echo ""
+      - echo "Сборка Node.js бота с Bun..."
+      - cd {{.GIFT_API_DIR}} && bun build src/giftBot.ts --compile --target=bun-linux-x64 --outfile {{.RELEASE_DIR}}/linux/giftBot
+      - cd {{.GIFT_API_DIR}} && bun build src/giftBot.ts --compile --target=bun-darwin-x64 --outfile {{.RELEASE_DIR}}/macos/giftBot-x64
+      - cd {{.GIFT_API_DIR}} && bun build src/giftBot.ts --compile --target=bun-darwin-arm64 --outfile {{.RELEASE_DIR}}/macos/giftBot-arm64
+      - cd {{.GIFT_API_DIR}} && bun build src/giftBot.ts --compile --target=bun-windows-x64 --outfile {{.RELEASE_DIR}}/windows/giftBot.exe
+      - echo ""
+      - echo "Копирование в releases/latest..."
+      - rm -rf {{.PROJECT_DIR}}/releases/latest
+      - cp -r {{.RELEASE_DIR}} {{.PROJECT_DIR}}/releases/latest
+      - echo ""
+      - echo "Сборка завершена!"
+      - echo "Релизы в {{.RELEASE_DIR}}/"
+      - echo "Latest {{.PROJECT_DIR}}/releases/latest/"
+      - echo ""
+      - ls -la {{.RELEASE_DIR}}/
+
+  license:
+    desc: Создать лицензию (интерактивно)
+    dir: "{{.LICENSE_DIR}}"
+    cmds:
+      - python3 create_license.py create
+
+  license-quick:
+    desc: Быстрое создание лицензии
+    dir: "{{.LICENSE_DIR}}"
+    vars:
+      DAYS: '{{.DAYS | default "30"}}'
+      INSTANCES: '{{.INSTANCES | default "1"}}'
+      NOTE: '{{.NOTE | default ""}}'
+    cmds:
+      - python3 create_license.py create-quick --days {{.DAYS}} --instances {{.INSTANCES}} --note "{{.NOTE}}"
+
+  license-list:
+    desc: Показать все лицензии
+    dir: "{{.LICENSE_DIR}}"
+    cmds:
+      - python3 create_license.py list
+
+  license-admin:
+    desc: Запустить admin сервер (локальный, :8081)
+    dir: "{{.LICENSE_DIR}}"
+    cmds:
+      - echo ""
+      - echo "ADMIN SERVER - ТОЛЬКО ДЛЯ ЛОКАЛЬНОЙ СЕТИ!"
+      - echo "Веб-интерфейс http://127.0.0.1:8081"
+      - echo ""
+      - pip install -q -r requirements.txt
+      - python3 admin_server.py
+
+  license-public:
+    desc: Запустить public сервер (валидация, :8080)
+    dir: "{{.LICENSE_DIR}}"
+    cmds:
+      - echo ""
+      - echo "PUBLIC SERVER - для валидации лицензий"
+      - echo "API http://0.0.0.0:8080"
+      - echo ""
+      - pip install -q -r requirements.txt
+      - python3 public_server.py
+
+  docs-install:
+    desc: Установить зависимости документации
+    dir: "{{.DOCS_DIR}}"
+    cmds:
+      - echo "Установка зависимостей документации..."
+      - npm install
+      - echo "Зависимости документации установлены!"
+
+  docs:
+    desc: Запустить Docusaurus dev-сервер
+    deps: [docs-install]
+    dir: "{{.DOCS_DIR}}"
+    cmds:
+      - echo ""
+      - echo "Запуск Docusaurus dev-сервера..."
+      - echo "Документация http://localhost:3000"
+      - echo ""
+      - npm start
+
+  docs-build:
+    desc: Собрать статическую документацию
+    deps: [docs-install]
+    dir: "{{.DOCS_DIR}}"
+    cmds:
+      - echo ""
+      - echo "Сборка статической документации..."
+      - npm run build
+      - echo ""
+      - echo "Документация собрана в {{.DOCS_DIR}}/build/"

@@ -1,0 +1,42 @@
+.starField {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 0;
+}
+
+.star {
+    position: absolute;
+    color: #e0af68;
+    filter: drop-shadow(0 0 3px #e0af68);
+    animation: twinkle ease-in-out infinite alternate;
+}
+
+@keyframes twinkle {
+    0% {
+        opacity: 0.15;
+        transform: scale(0.9);
+        filter: drop-shadow(0 0 2px #e0af68);
+    }
+
+    50% {
+        opacity: 0.4;
+        filter: drop-shadow(0 0 4px #fbbf24);
+    }
+
+    100% {
+        opacity: 0.2;
+        transform: scale(1.05);
+        filter: drop-shadow(0 0 3px #e0af68);
+    }
+}
+
+/* Light theme stars */
+:global([data-theme='light']) .star {
+    color: #8c6c3e;
+    filter: drop-shadow(0 0 3px #8c6c3e);
+}
