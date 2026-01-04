@@ -473,3 +473,8 @@ tasks:
       - npm run build
       - echo ""
       - echo "Документация собрана в {{.DOCS_DIR}}/build/"
+
+  setup-docs-repo:
+    desc: Подготовить docs как отдельный git репозиторий
+    cmds:
+      - ./scripts/setup_docs_repo.sh
