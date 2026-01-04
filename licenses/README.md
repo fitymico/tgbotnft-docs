@@ -5,15 +5,11 @@
 ## Быстрый старт
 
 ```bash
-# Установка task (если не установлен)
-brew install go-task/tap/go-task  # macOS
-# или: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d
-
 # Установка зависимостей
-task install
+make install
 
 # Запуск обоих серверов
-task start
+make start
 ```
 
 ## Архитектура
@@ -41,12 +37,12 @@ task start
 
 | Команда | Описание |
 |---------|----------|
-| `task start` | Запустить оба сервера |
-| `task stop` | Остановить оба сервера |
-| `task status` | Показать статус |
-| `task logs` | Показать логи |
-| `task license` | Создать лицензию (интерактивно) |
-| `task license-list` | Список всех лицензий |
+| `make start` | Запустить оба сервера |
+| `make stop` | Остановить оба сервера |
+| `make status` | Показать статус |
+| `make logs` | Показать логи |
+| `make license` | Создать лицензию (интерактивно) |
+| `make license-list` | Список всех лицензий |
 
 ## Лицензия
 
