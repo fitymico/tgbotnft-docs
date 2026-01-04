@@ -41,7 +41,7 @@ help:
 	@echo "  make clean            - Очистить логи и PID файлы"
 
 venv:
-	@if [ ! -f $(PYTHON) ]; then \
+	@if [ ! -f $(PIP) ]; then \
 		echo "Создание виртуального окружения..."; \
 		rm -rf $(VENV_DIR); \
 		python3 -m venv $(VENV_DIR); \
@@ -194,7 +194,12 @@ clean: stop
 	@find $(PROJECT_DIR) -type f -name "*.pyc" -delete 2>/dev/null || true
 	@echo "Очистка завершена"
 
-full-clean: clean
-	@echo "Удаление виртуального окружения..."
+full-clean:
+	@echo "Полная очистка..."
 	@rm -rf $(VENV_DIR)
+	@rm -rf $(DATA_DIR)
+	@find $(PROJECT_DIR) -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	@find $(PROJECT_DIR) -type f -name "*.pyc" -delete 2>/dev/null || true
+	@pkill -f "python.*admin_server" 2>/dev/null || true
+	@pkill -f "python.*public_server" 2>/dev/null || true
 	@echo "Полная очистка завершена"
