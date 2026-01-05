@@ -457,7 +457,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ℹ️ Помощь - Service Bot
 
 📄 **Отправляю файл с инструкциями...**
-Прочитайте файл README.md для получения полной информации о настройке бота.
+Откройте PDF файл для получения полной информации о настройке бота.
 
 Поддержка:
 Если у вас возникли вопросы, свяжитесь с @Dimopster.
@@ -469,21 +469,21 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Сначала отправляем текст
     if query:
         await query.edit_message_text(help_text, reply_markup=reply_markup)
-        # Отправляем файл в ответ на callback
-        with open("README.md", "rb") as file:
+        # Отправляем PDF файл в ответ на callback
+        with open("README.pdf", "rb") as file:
             await context.bot.send_document(
                 chat_id=query.message.chat_id,
                 document=file,
-                filename="README_инструкция.md",
+                filename="Инструкция_по_настройке.pdf",
                 caption="📖 Полная инструкция по настройке бота"
             )
     else:
         await update.message.reply_text(help_text, reply_markup=reply_markup)
-        # Отправляем файл в ответ на команду
-        with open("README.md", "rb") as file:
+        # Отправляем PDF файл в ответ на команду
+        with open("README.pdf", "rb") as file:
             await update.message.reply_document(
                 document=file,
-                filename="README_инструкция.md",
+                filename="Инструкция_по_настройке.pdf",
                 caption="📖 Полная инструкция по настройке бота"
             )
 
