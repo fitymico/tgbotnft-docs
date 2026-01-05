@@ -20,9 +20,12 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "8547506087:AAE4nn8YmZVpwA5IU3nHU311xrFnKEyCpBw"
 
 SUBSCRIPTION_PLANS = {
-    "basic": {"name": "Базовый", "price": 50, "duration_days": 30, "stars": 50},
-    "pro": {"name": "Про", "price": 150, "duration_days": 90, "stars": 150},
-    "premium": {"name": "Премиум", "price": 300, "duration_days": 365, "stars": 300}
+    "basic": {"name": "SELF-HOST", "price": 109, "duration_days": 30, "stars": 109},
+    "pro": {"name": "HOSTING", "price": 169, "duration_days": 30, "stars": 169},
+    "premium": {"name": "HOSTING-PRO", "price": 249, "duration_days": 30, "stars": 249},
+    "basic-year": {"name": "SELF-HOST", "price": 1090, "duration_days": 365, "stars": 1090},
+    "pro-year": {"name": "HOSTING", "price": 1690, "duration_days": 365, "stars": 1690},
+    "premium-year": {"name": "HOSTING-PRO", "price": 2490, "duration_days": 365, "stars": 2490}
 }
 
 class Database:
@@ -142,22 +145,77 @@ async def select_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     keyboard = []
-    for plan_id, plan_info in SUBSCRIPTION_PLANS.items():
+    
+    # Месячные подписки
+    keyboard.append([InlineKeyboardButton("📅 Месячные подписки", callback_data="monthly_plans")])
+    
+    # Годовые подписки
+    keyboard.append([InlineKeyboardButton("📅 Годовые подписки", callback_data="yearly_plans")])
+    
+    keyboard.append([InlineKeyboardButton("⬅️ Назад ⬅️", callback_data="back_to_main")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "📦 Выберите тип подписки:\n\n"
+        "💰 **Годовые подписки** - экономия 2 месяца бесплатно!\n"
+        "📅 **Месячные подписки** - гибкий платежный план\n\n"
+        "Выберите тип подписки:",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def show_monthly_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    keyboard = []
+    monthly_plans = {k: v for k, v in SUBSCRIPTION_PLANS.items() if not k.endswith('-year')}
+    
+    for plan_id, plan_info in monthly_plans.items():
         keyboard.append([
             InlineKeyboardButton(
-                f"{plan_info['name']} - {plan_info['stars']} ⭐",
+                f"{plan_info['name']} - {plan_info['stars']} ⭐/мес",
                 callback_data=f"buy_plan_{plan_id}"
             )
         ])
     
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])
+    keyboard.append([InlineKeyboardButton("⬅️ Назад ⬅️", callback_data="select_plan")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(
-        "📦 Выберите тарифный план:\n\n"
-        "После покупки вам будет присвоен лицензионный ключ "
-        "и доступ к настройке бота.",
-        reply_markup=reply_markup
+        "📅 **Месячные подписки**\n\n"
+        "Выберите подходящий тариф:",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def show_yearly_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    keyboard = []
+    yearly_plans = {k: v for k, v in SUBSCRIPTION_PLANS.items() if k.endswith('-year')}
+    
+    for plan_id, plan_info in yearly_plans.items():
+        monthly_equivalent = plan_info['stars'] // 12
+        savings = plan_info['stars'] - (monthly_equivalent * 12)
+        
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{plan_info['name']} - {plan_info['stars']} ⭐/год",
+                callback_data=f"buy_plan_{plan_id}"
+            )
+        ])
+    
+    keyboard.append([InlineKeyboardButton("⬅️ Назад ⬅️", callback_data="select_plan")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "📆 **Годовые подписки**\n\n"
+        "💰 Экономия 2 месяца бесплатно!\n"
+        "Выберите подходящий тариф:",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
     )
 
 async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -251,7 +309,7 @@ async def my_license(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = [
         [InlineKeyboardButton("🔄 Обновить", callback_data="my_license")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]
+        [InlineKeyboardButton("⬅️ Назад ⬅️", callback_data="back_to_main")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -278,7 +336,7 @@ async def bot_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(f"🤖 Токен бота: {'✅' if user[6] else '❌'}", callback_data="set_bot_token")],
         [InlineKeyboardButton(f"🔑 API ID: {'✅' if user[7] else '❌'}", callback_data="set_api_id")],
         [InlineKeyboardButton(f"🔐 API Hash: {'✅' if user[8] else '❌'}", callback_data="set_api_hash")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]
+        [InlineKeyboardButton("⬅️ Назад ⬅️", callback_data="back_to_main")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -289,7 +347,8 @@ async def bot_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Токен вашего бота (от @BotFather)\n"
         f"• API ID и API Hash (от my.telegram.org)\n\n"
         f"Выберите параметр для настройки:",
-        reply_markup=reply_markup
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
     )
 
 async def set_bot_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -303,7 +362,8 @@ async def set_bot_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "3. Создайте бота и скопируйте токен\n"
         "4. Отправьте токен в этот чат\n\n"
         "Токен выглядит так: `1234567890:ABCdefGHIjklMNOpqrsTUVwxyz123456789`\n\n"
-        "Отправьте токен сообщением в этот чат:"
+        "Отправьте токен сообщением в этот чат:",
+        parse_mode='Markdown'
     )
     
     context.user_data['awaiting'] = 'bot_token'
@@ -318,7 +378,8 @@ async def set_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2. Войдите под своим номером телефона\n"
         "3. Перейдите в API development tools\n"
         "4. Скопируйте App api_id\n\n"
-        "Отправьте API ID сообщением в этот чат:"
+        "Отправьте API ID сообщением в этот чат:",
+        parse_mode='Markdown'
     )
     
     context.user_data['awaiting'] = 'api_id'
@@ -333,7 +394,8 @@ async def set_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2. Войдите под своим номером телефона\n"
         "3. Перейдите в API development tools\n"
         "4. Скопируйте App api_hash\n\n"
-        "Отправьте API Hash сообщением в этот чат:"
+        "Отправьте API Hash сообщением в этот чат:",
+        parse_mode='Markdown'
     )
     
     context.user_data['awaiting'] = 'api_hash'
@@ -384,47 +446,54 @@ async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         "👋 Добро пожаловать в Service Bot!\n\n"
         "Выберите действие ниже:",
-        reply_markup=reply_markup
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query if update.callback_query else None
     
     help_text = """
-ℹ️ **Помощь - Service Bot**
+ℹ️ Помощь - Service Bot
 
-**Как начать работу:**
-1. Нажмите "Старт" и выберите тариф
-2. Оплатите подписку через Telegram Stars
-3. Получите лицензионный ключ
-4. Настройте параметры бота
+📄 **Отправляю файл с инструкциями...**
+Прочитайте файл README.md для получения полной информации о настройке бота.
 
-**Настройка бота:**
-• **Токен бота** - получите от @BotFather
-• **API ID/Hash** - получите с my.telegram.org
-
-**Тарифные планы:**
-• Базовый - 30 дней
-• Про - 90 дней  
-• Премиум - 365 дней
-
-**Поддержка:**
-Если у вас возникли вопросы, свяжитесь с администратором.
+Поддержка:
+Если у вас возникли вопросы, свяжитесь с @Dimopster.
     """
     
-    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
+    keyboard = [[InlineKeyboardButton("⬅️ Назад ⬅️", callback_data="back_to_main")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
+    # Сначала отправляем текст
     if query:
         await query.edit_message_text(help_text, reply_markup=reply_markup)
+        # Отправляем файл в ответ на callback
+        with open("README.md", "rb") as file:
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=file,
+                filename="README_инструкция.md",
+                caption="📖 Полная инструкция по настройке бота"
+            )
     else:
         await update.message.reply_text(help_text, reply_markup=reply_markup)
+        # Отправляем файл в ответ на команду
+        with open("README.md", "rb") as file:
+            await update.message.reply_document(
+                document=file,
+                filename="README_инструкция.md",
+                caption="📖 Полная инструкция по настройке бота"
+            )
 
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(select_plan, pattern="^select_plan$"))
+    application.add_handler(CallbackQueryHandler(show_monthly_plans, pattern="^monthly_plans$"))
+    application.add_handler(CallbackQueryHandler(show_yearly_plans, pattern="^yearly_plans$"))
     application.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_plan_"))
     application.add_handler(CallbackQueryHandler(my_license, pattern="^my_license$"))
     application.add_handler(CallbackQueryHandler(bot_settings, pattern="^bot_settings$"))
