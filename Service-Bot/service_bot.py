@@ -1269,6 +1269,14 @@ async def send_reminder_notifications():
                 expires_at = datetime.fromisoformat(reminder[10])
                 plan_id = reminder[11]
                 
+                # Проверяем, есть ли у пользователя подписка в очереди
+                # Если да — не отправляем напоминание (пользователь уже продлил)
+                queued = db.get_queued_subscription(telegram_id)
+                if queued:
+                    db.mark_reminder_sent(reminder_id)
+                    logger.info(f"Пропущено напоминание для {telegram_id} ({username}) — есть подписка в очереди")
+                    continue
+                
                 plan = SUBSCRIPTION_PLANS.get(plan_id, {})
                 plan_name = plan.get('name', 'Неизвестный тариф')
                 
