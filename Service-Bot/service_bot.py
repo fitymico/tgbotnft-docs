@@ -15,6 +15,8 @@ from aiogram.types import (
 )
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -38,6 +40,11 @@ SUBSCRIPTION_PLANS = {
     "premium-year": {"name": "HOSTING-PRO", "price": 2490, "duration_days": 365, "stars": 2490, "equal": "(~4490₽)"}
 }
 
+class BotSetupStates(StatesGroup):
+    waiting_bot_token = State()
+    waiting_api_id = State()
+    waiting_api_hash = State()
+
 class Database:
     def __init__(self):
         self.conn = sqlite3.connect('service_bot.db', check_same_thread=False)
@@ -56,6 +63,7 @@ class Database:
                 bot_token TEXT,
                 api_id TEXT,
                 api_hash TEXT,
+                session_string TEXT,
                 has_used_refund BOOLEAN DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
@@ -124,6 +132,12 @@ class Database:
             FOREIGN KEY (user_id) REFERENCES users (user_id)
             )
         ''')
+        
+        try:
+            self.cursor.execute('ALTER TABLE users ADD COLUMN session_string TEXT')
+        except sqlite3.OperationalError:
+            pass
+        
         self.conn.commit()
     
     def save_payment(self, user_id, license_key, stars_amount, telegram_payment_charge_id):
@@ -183,6 +197,43 @@ class Database:
         ''', (telegram_id,))
         self.conn.commit()
         return self.cursor.rowcount > 0
+    
+    def get_bot_settings(self, telegram_id):
+        self.cursor.execute('''
+            SELECT bot_token, api_id, api_hash FROM users WHERE telegram_id = ?
+        ''', (telegram_id,))
+        return self.cursor.fetchone()
+    
+    def update_bot_token(self, telegram_id, bot_token):
+        self.cursor.execute('''
+            UPDATE users SET bot_token = ? WHERE telegram_id = ?
+        ''', (bot_token, telegram_id))
+        self.conn.commit()
+    
+    def update_api_id(self, telegram_id, api_id):
+        self.cursor.execute('''
+            UPDATE users SET api_id = ? WHERE telegram_id = ?
+        ''', (api_id, telegram_id))
+        self.conn.commit()
+    
+    def update_api_hash(self, telegram_id, api_hash):
+        self.cursor.execute('''
+            UPDATE users SET api_hash = ? WHERE telegram_id = ?
+        ''', (api_hash, telegram_id))
+        self.conn.commit()
+    
+    def update_session_string(self, telegram_id, session_string):
+        self.cursor.execute('''
+            UPDATE users SET session_string = ? WHERE telegram_id = ?
+        ''', (session_string, telegram_id))
+        self.conn.commit()
+    
+    def get_session_string(self, telegram_id):
+        self.cursor.execute('''
+            SELECT session_string FROM users WHERE telegram_id = ?
+        ''', (telegram_id,))
+        result = self.cursor.fetchone()
+        return result[0] if result else None
     
     def get_active_license(self, telegram_id):
         """Получить активную лицензию пользователя"""
@@ -361,6 +412,7 @@ async def cmd_start(message: Message):
     keyboard.append([InlineKeyboardButton(text="🔑 Мой лицензионный ключ", callback_data="my_license")])
     
     if active_license:
+        keyboard.append([InlineKeyboardButton(text="⚙️ Настройки бота", callback_data="bot_settings")])
         keyboard.append([InlineKeyboardButton(text="❌ Отменить подписку", callback_data="cancel_subscription")])
     
     keyboard.append([InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")])
@@ -1637,6 +1689,206 @@ async def set_refund_used(message: Message):
     else:
         await message.answer(f"❌ Пользователь {telegram_id} не найден")
 
+@dp.callback_query(F.data == "bot_settings")
+async def bot_settings_menu(callback: CallbackQuery):
+    active_license = db.get_active_license(callback.from_user.id)
+    if not active_license:
+        await callback.answer("❌ Для доступа к настройкам нужна активная подписка", show_alert=True)
+        return
+    
+    settings = db.get_bot_settings(callback.from_user.id)
+    bot_token = settings[0] if settings and settings[0] else None
+    api_id = settings[1] if settings and settings[1] else None
+    api_hash = settings[2] if settings and settings[2] else None
+    
+    status_token = "✅" if bot_token else "❌"
+    status_api_id = "✅" if api_id else "❌"
+    status_api_hash = "✅" if api_hash else "❌"
+    
+    all_configured = bot_token and api_id and api_hash
+    
+    text = (
+        f"⚙️ <b>Настройки бота</b>\n\n"
+        f"Для работы вашего бота-скупщика подарков необходимо настроить:\n\n"
+        f"{status_token} <b>Bot Token</b> — токен от @BotFather\n"
+        f"{status_api_id} <b>API_ID</b> — с my.telegram.org\n"
+        f"{status_api_hash} <b>API_HASH</b> — с my.telegram.org\n\n"
+    )
+    
+    if all_configured:
+        text += "✅ <b>Все данные настроены!</b>\n\nТеперь пройдите авторизацию на сайте."
+    else:
+        text += "⚠️ <b>Необходимо заполнить все данные</b> для активации бота."
+    
+    keyboard = [
+        [InlineKeyboardButton(text=f"{status_token} Изменить Bot Token", callback_data="setup_bot_token")],
+        [InlineKeyboardButton(text=f"{status_api_id} Изменить API_ID", callback_data="setup_api_id")],
+        [InlineKeyboardButton(text=f"{status_api_hash} Изменить API_HASH", callback_data="setup_api_hash")],
+        [InlineKeyboardButton(text="🔐 Авторизация на сайте", url="https://pluttan.github.io/Telegram-Bot-NFT-docs/auth")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    
+    await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+@dp.callback_query(F.data == "setup_bot_token")
+async def setup_bot_token(callback: CallbackQuery, state: FSMContext):
+    keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data="bot_settings")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    
+    await callback.message.edit_text(
+        "🤖 <b>Настройка Bot Token</b>\n\n"
+        "Отправьте токен вашего бота от @BotFather.\n\n"
+        "<b>Как получить токен:</b>\n"
+        "1. Откройте @BotFather\n"
+        "2. Отправьте команду /newbot\n"
+        "3. Укажите имя и username бота\n"
+        "4. Скопируйте полученный токен\n\n"
+        "Формат токена: <code>1234567890:ABCdefGHIjklMNOpqrsTUVwxyz123456789</code>",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(BotSetupStates.waiting_bot_token)
+
+@dp.message(BotSetupStates.waiting_bot_token)
+async def process_bot_token(message: Message, state: FSMContext):
+    token = message.text.strip()
+    
+    if not token or ":" not in token or len(token) < 40:
+        await message.answer(
+            "❌ Неверный формат токена.\n\n"
+            "Токен должен выглядеть примерно так:\n"
+            "<code>1234567890:ABCdefGHIjklMNOpqrsTUVwxyz123456789</code>\n\n"
+            "Попробуйте ещё раз:",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    db.update_bot_token(message.from_user.id, token)
+    await state.clear()
+    
+    keyboard = [
+        [InlineKeyboardButton(text="➡️ Настроить API_ID", callback_data="setup_api_id")],
+        [InlineKeyboardButton(text="⬅️ К настройкам", callback_data="bot_settings")]
+    ]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    
+    await message.answer(
+        "✅ <b>Bot Token сохранён!</b>\n\n"
+        "Теперь настройте API_ID и API_HASH с сайта my.telegram.org",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML
+    )
+
+@dp.callback_query(F.data == "setup_api_id")
+async def setup_api_id(callback: CallbackQuery, state: FSMContext):
+    keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data="bot_settings")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    
+    await callback.message.edit_text(
+        "🔑 <b>Настройка API_ID</b>\n\n"
+        "Отправьте ваш API_ID с сайта my.telegram.org\n\n"
+        "<b>Как получить API_ID:</b>\n"
+        "1. Перейдите на <a href='https://my.telegram.org'>my.telegram.org</a>\n"
+        "2. Войдите под своим номером телефона\n"
+        "3. Перейдите в раздел «API development tools»\n"
+        "4. Скопируйте значение <b>App api_id</b>\n\n"
+        "Формат: число, например <code>12345678</code>",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True
+    )
+    await state.set_state(BotSetupStates.waiting_api_id)
+
+@dp.message(BotSetupStates.waiting_api_id)
+async def process_api_id(message: Message, state: FSMContext):
+    api_id = message.text.strip()
+    
+    if not api_id.isdigit():
+        await message.answer(
+            "❌ API_ID должен быть числом.\n\n"
+            "Например: <code>12345678</code>\n\n"
+            "Попробуйте ещё раз:",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    db.update_api_id(message.from_user.id, api_id)
+    await state.clear()
+    
+    keyboard = [
+        [InlineKeyboardButton(text="➡️ Настроить API_HASH", callback_data="setup_api_hash")],
+        [InlineKeyboardButton(text="⬅️ К настройкам", callback_data="bot_settings")]
+    ]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    
+    await message.answer(
+        "✅ <b>API_ID сохранён!</b>\n\n"
+        "Теперь настройте API_HASH",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML
+    )
+
+@dp.callback_query(F.data == "setup_api_hash")
+async def setup_api_hash(callback: CallbackQuery, state: FSMContext):
+    keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data="bot_settings")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    
+    await callback.message.edit_text(
+        "🔐 <b>Настройка API_HASH</b>\n\n"
+        "Отправьте ваш API_HASH с сайта my.telegram.org\n\n"
+        "<b>Как получить API_HASH:</b>\n"
+        "1. Перейдите на <a href='https://my.telegram.org'>my.telegram.org</a>\n"
+        "2. Войдите под своим номером телефона\n"
+        "3. Перейдите в раздел «API development tools»\n"
+        "4. Скопируйте значение <b>App api_hash</b>\n\n"
+        "Формат: строка из 32 символов, например <code>a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6</code>",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True
+    )
+    await state.set_state(BotSetupStates.waiting_api_hash)
+
+@dp.message(BotSetupStates.waiting_api_hash)
+async def process_api_hash(message: Message, state: FSMContext):
+    api_hash = message.text.strip()
+    
+    if len(api_hash) != 32:
+        await message.answer(
+            "❌ API_HASH должен состоять из 32 символов.\n\n"
+            "Например: <code>a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6</code>\n\n"
+            "Попробуйте ещё раз:",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    db.update_api_hash(message.from_user.id, api_hash)
+    await state.clear()
+    
+    settings = db.get_bot_settings(message.from_user.id)
+    all_configured = settings and settings[0] and settings[1] and settings[2]
+    
+    keyboard = [[InlineKeyboardButton(text="⬅️ К настройкам", callback_data="bot_settings")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    
+    if all_configured:
+        await message.answer(
+            "🎉 <b>Все настройки завершены!</b>\n\n"
+            "✅ Bot Token — настроен\n"
+            "✅ API_ID — настроен\n"
+            "✅ API_HASH — настроен\n\n"
+            "Теперь пройдите авторизацию Telegram для покупки подарков!",
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await message.answer(
+            "✅ <b>API_HASH сохранён!</b>\n\n"
+            "Проверьте остальные настройки.",
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
+
 @dp.callback_query(F.data == "help")
 async def help_command(callback: CallbackQuery):
     help_text = """
@@ -1691,6 +1943,7 @@ async def back_to_main(callback: CallbackQuery):
     keyboard.append([InlineKeyboardButton(text="🔑 Мой лицензионный ключ", callback_data="my_license")])
     
     if active_license:
+        keyboard.append([InlineKeyboardButton(text="⚙️ Настройки бота", callback_data="bot_settings")])
         keyboard.append([InlineKeyboardButton(text="❌ Отменить подписку", callback_data="cancel_subscription")])
     
     keyboard.append([InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")])
