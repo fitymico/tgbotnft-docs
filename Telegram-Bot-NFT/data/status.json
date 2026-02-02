@@ -1,0 +1,8 @@
+{
+  "is_running": true,
+  "status_text": "running",
+  "distribution": "<1000 10\n>=1000 и <5000 5",
+  "iterations_total": 8,
+  "iteration_current": 0,
+  "delay": 1
+}

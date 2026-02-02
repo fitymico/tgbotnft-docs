@@ -1,0 +1,21 @@
+services:
+  telegram-bot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: telegram-gift-bot
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    volumes:
+      # Сохраняем данные между перезапусками
+      - ../data:/app/data
+    environment:
+      - TZ=Europe/Moscow
+    # Healthcheck для мониторинга
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "talkbot.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
