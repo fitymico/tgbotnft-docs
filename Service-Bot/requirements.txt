@@ -4,3 +4,5 @@ python-dotenv==1.0.0
 reportlab==4.2.0
 python-dateutil==2.9.0.post0
 cryptography==42.0.7
+telethon==1.37.0
+docker>=7.0.0

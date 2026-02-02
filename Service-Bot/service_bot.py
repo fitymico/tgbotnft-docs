@@ -32,9 +32,24 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан. Установите переменную окружения BOT_TOKEN.")
 
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-if not ADMIN_ID:
-    raise ValueError("ADMIN_ID не задан. Установите переменную окружения ADMIN_ID.")
+ADMIN_IDS = set()
+for raw_id in os.getenv("ADMIN_IDS", "").split(","):
+    raw_id = raw_id.strip()
+    if raw_id.isdigit():
+        ADMIN_IDS.add(int(raw_id))
+
+# Обратная совместимость: если задан ADMIN_ID (старый формат)
+_legacy = os.getenv("ADMIN_ID", "").strip()
+if _legacy.isdigit():
+    ADMIN_IDS.add(int(_legacy))
+
+if not ADMIN_IDS:
+    raise ValueError("ADMIN_IDS не задан. Установите переменную окружения ADMIN_IDS (или ADMIN_ID).")
+
+SERVER_API_ID = int(os.getenv("SERVER_API_ID", "0"))
+SERVER_API_HASH = os.getenv("SERVER_API_HASH", "")
+WEB_AUTH_HOST = os.getenv("WEB_AUTH_HOST", "http://localhost:8082")
+WEB_AUTH_PORT = int(os.getenv("WEB_AUTH_PORT", "8082"))
 
 SUBSCRIPTION_PLANS = {
     "basic": {"name": "SELF-HOST", "price": 1, "duration_days": 30, "stars": 1, "equal": "(~199₽)"},
@@ -47,8 +62,14 @@ SUBSCRIPTION_PLANS = {
 
 class BotSetupStates(StatesGroup):
     waiting_bot_token = State()
-    waiting_api_id = State()
-    waiting_api_hash = State()
+
+class UserStates(StatesGroup):
+    waiting_admin_message = State()
+
+class AdminStates(StatesGroup):
+    waiting_user_search = State()
+    waiting_message_text = State()
+    waiting_refund_txn = State()
 
 class Database:
     def __init__(self):
@@ -143,6 +164,21 @@ class Database:
         except sqlite3.OperationalError:
             pass
 
+        try:
+            cursor.execute('ALTER TABLE users ADD COLUMN deployment_status TEXT DEFAULT NULL')
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute('ALTER TABLE users ADD COLUMN container_id TEXT DEFAULT NULL')
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute('ALTER TABLE users ADD COLUMN vps_ip TEXT DEFAULT NULL')
+        except sqlite3.OperationalError:
+            pass
+
         self.conn.commit()
     
     def save_payment(self, user_id, license_key, stars_amount, telegram_payment_charge_id):
@@ -179,7 +215,7 @@ class Database:
     
     def has_user_used_refund(self, telegram_id):
         """Проверить, использовал ли пользователь возврат"""
-        if telegram_id == ADMIN_ID:
+        if telegram_id in ADMIN_IDS:
             return False
 
         cursor = self.conn.cursor()
@@ -191,7 +227,7 @@ class Database:
     
     def mark_refund_used(self, telegram_id):
         """Отметить, что пользователь использовал возврат"""
-        if telegram_id == ADMIN_ID:
+        if telegram_id in ADMIN_IDS:
             return True
 
         cursor = self.conn.cursor()
@@ -424,41 +460,180 @@ class Database:
         ''', (now,))
         return cursor.fetchall()
 
+    def get_all_users(self) -> list:
+        """Все пользователи, отсортированные по дате создания"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT * FROM users ORDER BY created_at DESC')
+        return cursor.fetchall()
+
+    def get_users_page(self, offset: int, limit: int = 10) -> tuple:
+        """Пагинированный список. Возвращает (rows, total_count)"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM users')
+        total = cursor.fetchone()[0]
+        cursor.execute('SELECT * FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?', (limit, offset))
+        rows = cursor.fetchall()
+        return rows, total
+
+    def search_users(self, query: str) -> list:
+        """Поиск по telegram_id или username (LIKE)"""
+        cursor = self.conn.cursor()
+        if query.isdigit():
+            cursor.execute('SELECT * FROM users WHERE telegram_id = ?', (int(query),))
+        else:
+            cursor.execute('SELECT * FROM users WHERE username LIKE ?', (f'%{query}%',))
+        return cursor.fetchall()
+
+    def get_payment_by_charge_id(self, charge_id: str):
+        """Найти платёж по telegram_payment_charge_id"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT p.*, u.telegram_id, u.username
+            FROM payments p
+            JOIN users u ON p.user_id = u.user_id
+            WHERE p.telegram_payment_charge_id = ?
+        ''', (charge_id,))
+        return cursor.fetchone()
+
+    def get_user_payments(self, telegram_id: int) -> list:
+        """Все платежи пользователя"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT * FROM payments
+            WHERE user_id = (SELECT user_id FROM users WHERE telegram_id = ?)
+            ORDER BY created_at DESC
+        ''', (telegram_id,))
+        return cursor.fetchall()
+
+    def clear_user_subscription(self, telegram_id: int):
+        """Очистить подписку (subscription_plan, license_key, subscription_end_date → NULL)"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            UPDATE users SET
+                subscription_plan = NULL,
+                license_key = NULL,
+                subscription_end_date = NULL
+            WHERE telegram_id = ?
+        ''', (telegram_id,))
+        self.conn.commit()
+
+    def update_deployment_status(self, telegram_id: int, status: str | None):
+        """Обновить статус деплоя: NULL, pending_setup, running, stopped, awaiting_admin"""
+        cursor = self.conn.cursor()
+        cursor.execute('UPDATE users SET deployment_status = ? WHERE telegram_id = ?', (status, telegram_id))
+        self.conn.commit()
+
+    def update_container_id(self, telegram_id: int, container_id: str | None):
+        cursor = self.conn.cursor()
+        cursor.execute('UPDATE users SET container_id = ? WHERE telegram_id = ?', (container_id, telegram_id))
+        self.conn.commit()
+
+    def get_deployment_info(self, telegram_id: int):
+        """Получить (deployment_status, container_id, vps_ip)"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT deployment_status, container_id, vps_ip FROM users WHERE telegram_id = ?', (telegram_id,))
+        return cursor.fetchone()
+
+    def get_hosting_users(self) -> list:
+        """Все пользователи с планом HOSTING и deployment_status='running'"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT * FROM users
+            WHERE deployment_status = 'running'
+              AND subscription_plan IN ('pro', 'pro-year')
+        ''')
+        return cursor.fetchall()
+
+    def get_awaiting_admin_users(self) -> list:
+        """Пользователи HOSTING-PRO, ожидающие деплоя"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT * FROM users
+            WHERE deployment_status = 'awaiting_admin'
+              AND subscription_plan IN ('premium', 'premium-year')
+        ''')
+        return cursor.fetchall()
+
+    def get_user_plan_name(self, telegram_id: int) -> str | None:
+        """Получить имя тарифа пользователя (SELF-HOST / HOSTING / HOSTING-PRO)"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT subscription_plan FROM users WHERE telegram_id = ?', (telegram_id,))
+        row = cursor.fetchone()
+        if not row or not row[0]:
+            return None
+        plan = SUBSCRIPTION_PLANS.get(row[0])
+        return plan["name"] if plan else None
+
 db = Database()
 user_invoice_data = {}
+user_menu_message: dict[int, int] = {}  # telegram_id -> message_id
+user_notification_message: dict[int, int] = {}  # telegram_id -> message_id
 # Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    db.create_user(message.from_user.id, message.from_user.username)
-    
-    active_license = db.get_active_license(message.from_user.id)
-    
+
+def build_main_menu_keyboard(telegram_id: int) -> InlineKeyboardMarkup:
+    active_license = db.get_active_license(telegram_id)
+    plan_name = db.get_user_plan_name(telegram_id)
     keyboard = []
     if active_license:
         keyboard.append([InlineKeyboardButton(text="🔄 Продлить подписку", callback_data="renew_subscription")])
     else:
         keyboard.append([InlineKeyboardButton(text="📦 Выбрать тариф", callback_data="select_plan")])
-    
     keyboard.append([InlineKeyboardButton(text="🔑 Мой лицензионный ключ", callback_data="my_license")])
-    
     if active_license:
-        keyboard.append([InlineKeyboardButton(text="⚙️ Настройки бота", callback_data="bot_settings")])
+        if plan_name == "SELF-HOST":
+            keyboard.append([InlineKeyboardButton(text="📖 Документация", url="https://seventyzero.github.io/tgbotnft-docs/")])
+        elif plan_name in ("HOSTING", "HOSTING-PRO"):
+            keyboard.append([InlineKeyboardButton(text="⚙️ Управление ботом", callback_data="bot_settings")])
+        else:
+            keyboard.append([InlineKeyboardButton(text="⚙️ Настройки бота", callback_data="bot_settings")])
         keyboard.append([InlineKeyboardButton(text="❌ Отменить подписку", callback_data="cancel_subscription")])
-    
     keyboard.append([InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")])
-    
-    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
-    await message.answer(
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+async def delete_tracked_messages(telegram_id: int) -> None:
+    for store in (user_notification_message, user_menu_message):
+        msg_id = store.pop(telegram_id, None)
+        if msg_id is not None:
+            try:
+                await bot.delete_message(chat_id=telegram_id, message_id=msg_id)
+            except Exception:
+                pass
+
+
+async def send_menu(telegram_id: int) -> None:
+    reply_markup = build_main_menu_keyboard(telegram_id)
+    msg = await bot.send_message(
+        chat_id=telegram_id,
+        text="👋 Добро пожаловать в Service Bot!\n\nВыберите действие ниже:",
+        reply_markup=reply_markup,
+    )
+    user_menu_message[telegram_id] = msg.message_id
+
+
+async def notify_user(telegram_id: int, text: str) -> None:
+    await delete_tracked_messages(telegram_id)
+    notif = await bot.send_message(chat_id=telegram_id, text=text, parse_mode=ParseMode.HTML)
+    user_notification_message[telegram_id] = notif.message_id
+    await send_menu(telegram_id)
+
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    db.create_user(message.from_user.id, message.from_user.username)
+    await delete_tracked_messages(message.from_user.id)
+    reply_markup = build_main_menu_keyboard(message.from_user.id)
+    msg = await message.answer(
         "👋 Добро пожаловать в Service Bot!\n\n"
         "Этот бот поможет вам настроить вашего собственного Telegram бота "
         "с функциями покупки подарков за звезды.\n\n"
         "Выберите действие ниже:",
         reply_markup=reply_markup
     )
+    user_menu_message[message.from_user.id] = msg.message_id
 
 @dp.callback_query(F.data == "select_plan")
 async def select_plan(callback: CallbackQuery):
@@ -846,40 +1021,121 @@ async def successful_payment(message: Message):
     
     license_key = db.create_license_key(user[0], plan_id, plan["duration_days"])
     end_date = (datetime.now() + timedelta(days=plan["duration_days"])).isoformat()
-    
+
     db.update_user_subscription(user_id, plan_id, license_key, end_date)
-    
+
     refund_request = db.get_refund_request(user_id, user[3] if user[3] else "")
     if refund_request:
         refund_text = f"\n💰 <b>Возврат:</b> Запрошен возврат {refund_request[3]} ⭐ за предыдущую подписку."
         db.update_refund_status(refund_request[0], "approved")
     else:
         refund_text = ""
-    
+
     db.save_payment(
         user_id=user[0],
         license_key=license_key,
         stars_amount=plan["stars"],
         telegram_payment_charge_id=payment.telegram_payment_charge_id
     )
-    
-    keyboard = [
-        [InlineKeyboardButton(text="🔑 Показать лицензионный ключ", callback_data="my_license")],
-        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main")]
-    ]
-    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
-    await message.answer(
-        f"✅ <b>Оплата успешно завершена!</b>\n\n"
-        f"📋 <b>Детали подписки:</b>\n"
-        f"• Тариф: {plan['name']}\n"
-        f"• Срок: {plan['duration_days']} дней\n"
-        f"• Действует до: {datetime.fromisoformat(end_date).strftime('%d.%m.%Y')}\n"
-        f"{refund_text}\n\n"
-        f"Ваш лицензионный ключ сгенерирован!",
-        reply_markup=reply_markup,
-        parse_mode=ParseMode.HTML
-    )
+
+    # Разветвление по тарифу
+    plan_name = plan["name"]  # SELF-HOST / HOSTING / HOSTING-PRO
+
+    if plan_name == "SELF-HOST":
+        keyboard = [
+            [InlineKeyboardButton(text="🔑 Показать лицензионный ключ", callback_data="my_license")],
+            [InlineKeyboardButton(text="📖 Документация", url="https://seventyzero.github.io/tgbotnft-docs/")],
+            [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await message.answer(
+            f"✅ <b>Оплата успешно завершена!</b>\n\n"
+            f"📋 <b>Детали подписки:</b>\n"
+            f"• Тариф: {plan_name}\n"
+            f"• Срок: {plan['duration_days']} дней\n"
+            f"• Действует до: {datetime.fromisoformat(end_date).strftime('%d.%m.%Y')}\n"
+            f"{refund_text}\n\n"
+            f"Ваш лицензионный ключ сгенерирован!\n"
+            f"Используйте документацию для настройки бота на своём сервере.",
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
+
+    elif plan_name == "HOSTING":
+        db.update_deployment_status(user_id, "pending_setup")
+        keyboard = [
+            [InlineKeyboardButton(text="⚙️ Настроить бота", callback_data="bot_settings")],
+            [InlineKeyboardButton(text="🔑 Показать лицензионный ключ", callback_data="my_license")],
+            [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await message.answer(
+            f"✅ <b>Оплата принята!</b>\n\n"
+            f"📋 <b>Детали подписки:</b>\n"
+            f"• Тариф: {plan_name}\n"
+            f"• Срок: {plan['duration_days']} дней\n"
+            f"• Действует до: {datetime.fromisoformat(end_date).strftime('%d.%m.%Y')}\n"
+            f"{refund_text}\n\n"
+            f"Настройте бота для запуска на нашем сервере.\n"
+            f"После настройки Bot Token и авторизации бот будет запущен автоматически.",
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
+
+    elif plan_name == "HOSTING-PRO":
+        db.update_deployment_status(user_id, "pending_setup")
+        keyboard = [
+            [InlineKeyboardButton(text="⚙️ Настроить бота", callback_data="bot_settings")],
+            [InlineKeyboardButton(text="🔑 Показать лицензионный ключ", callback_data="my_license")],
+            [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await message.answer(
+            f"✅ <b>Оплата принята!</b>\n\n"
+            f"📋 <b>Детали подписки:</b>\n"
+            f"• Тариф: {plan_name}\n"
+            f"• Срок: {plan['duration_days']} дней\n"
+            f"• Действует до: {datetime.fromisoformat(end_date).strftime('%d.%m.%Y')}\n"
+            f"{refund_text}\n\n"
+            f"Настройте бота, после чего мы развернём его на отдельном VPS.\n"
+            f"После настройки Bot Token и авторизации администратор получит уведомление.",
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
+        # Уведомить админов о новом HOSTING-PRO пользователе
+        uname = f"@{message.from_user.username}" if message.from_user.username else f"ID:{user_id}"
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(
+                    admin_id,
+                    f"🆕 <b>Новый HOSTING-PRO пользователь!</b>\n\n"
+                    f"👤 {uname} (ID: <code>{user_id}</code>)\n"
+                    f"📦 Тариф: {plan_name}\n"
+                    f"📅 До: {datetime.fromisoformat(end_date).strftime('%d.%m.%Y')}\n\n"
+                    f"Пользователь настраивает бота. После авторизации потребуется ручной деплой на VPS.",
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception as e:
+                logger.error(f"Не удалось уведомить админа {admin_id} о HOSTING-PRO: {e}")
+
+    else:
+        # Fallback для неизвестных тарифов — стандартное поведение
+        keyboard = [
+            [InlineKeyboardButton(text="🔑 Показать лицензионный ключ", callback_data="my_license")],
+            [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await message.answer(
+            f"✅ <b>Оплата успешно завершена!</b>\n\n"
+            f"📋 <b>Детали подписки:</b>\n"
+            f"• Тариф: {plan_name}\n"
+            f"• Срок: {plan['duration_days']} дней\n"
+            f"• Действует до: {datetime.fromisoformat(end_date).strftime('%d.%m.%Y')}\n"
+            f"{refund_text}\n\n"
+            f"Ваш лицензионный ключ сгенерирован!",
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
 
 @dp.callback_query(F.data == "cancel_subscription")
 async def cancel_subscription(callback: CallbackQuery):
@@ -920,18 +1176,24 @@ async def cancel_subscription(callback: CallbackQuery):
     
     if queued and not active_license:
         queued_plan = SUBSCRIPTION_PLANS.get(queued[3], {})
+        if callback.from_user.id in ADMIN_IDS:
+            cancel_note = "При отмене будет выполнен возврат средств."
+        else:
+            cancel_note = "Подписка будет отменена без возврата.\nДля возврата — свяжитесь с администратором."
         keyboard = [
             [InlineKeyboardButton(text="✅ Да, отменить", callback_data="cancel_queued")],
-            [InlineKeyboardButton(text="❌ Нет, оставить", callback_data="back_to_main")]
         ]
+        if callback.from_user.id not in ADMIN_IDS:
+            keyboard.append([InlineKeyboardButton(text="📩 Связаться с админом (возврат)", callback_data="contact_admin_refund")])
+        keyboard.append([InlineKeyboardButton(text="❌ Нет, оставить", callback_data="back_to_main")])
         reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-        
+
         await callback.message.edit_text(
             f"⚠️ <b>Отмена подписки в очереди</b>\n\n"
             f"📋 <b>Подписка в очереди:</b>\n"
             f"• Тариф: {queued_plan.get('name', 'Неизвестно')}\n"
             f"• Стоимость: {queued[4]} ⭐\n\n"
-            f"При отмене будет выполнен возврат средств.",
+            f"{cancel_note}",
             reply_markup=reply_markup,
             parse_mode=ParseMode.HTML
         )
@@ -949,15 +1211,12 @@ async def cancel_subscription(callback: CallbackQuery):
         await callback.answer("❌ Подписка уже истекла", show_alert=True)
         return
     
-    has_used_refund = db.has_user_used_refund(callback.from_user.id)
-    
-    keyboard = [
-        [InlineKeyboardButton(text="✅ Да, отменить подписку", callback_data="cancel_current")],
-        [InlineKeyboardButton(text="❌ Нет, оставить", callback_data="back_to_main")]
-    ]
-    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
-    if callback.from_user.id == ADMIN_ID:
+    if callback.from_user.id in ADMIN_IDS:
+        keyboard = [
+            [InlineKeyboardButton(text="✅ Да, отменить подписку", callback_data="cancel_current")],
+            [InlineKeyboardButton(text="❌ Нет, оставить", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
         text = f"⚠️ <b>Отмена подписки (АДМИН)</b>\n\n"
         text += f"📋 <b>Детали подписки:</b>\n"
         text += f"• Тариф: {plan['name']}\n"
@@ -965,30 +1224,22 @@ async def cancel_subscription(callback: CallbackQuery):
         text += f"• Полная стоимость: {plan['stars']} ⭐\n"
         text += f"• Статус возврата: <b>♾️ БЕЗГРАНИЧНО (режим админа)</b>\n\n"
         text += f"Вы хотите отменить подписку?"
-    elif has_used_refund:
-        text = f"⚠️ <b>Отмена подписки</b>\n\n"
-        text += f"📋 <b>Детали подписки:</b>\n"
-        text += f"• Тариф: {plan['name']}\n"
-        text += f"• Осталось дней: {days_left}\n"
-        text += f"• Полная стоимость: {plan['stars']} ⭐\n"
-        text += f"• Статус возврата: ❌ Уже использован\n\n"
-        text += f"❌ <b>Возврат невозможен:</b>\n"
-        text += f"• Вы уже использовали свой единственный возврат\n"
-        text += f"• При отмене деньги не возвращаются\n\n"
-        text += f"Вы все равно хотите отменить подписку?"
     else:
+        keyboard = [
+            [InlineKeyboardButton(text="✅ Да, отменить подписку", callback_data="cancel_current")],
+            [InlineKeyboardButton(text="📩 Связаться с админом (возврат)", callback_data="contact_admin_refund")],
+            [InlineKeyboardButton(text="❌ Нет, оставить", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
         text = f"⚠️ <b>Отмена подписки</b>\n\n"
         text += f"📋 <b>Детали подписки:</b>\n"
         text += f"• Тариф: {plan['name']}\n"
         text += f"• Осталось дней: {days_left}\n"
-        text += f"• Полная стоимость: {plan['stars']} ⭐\n"
-        text += f"• Статус возврата: ✅ Доступен\n\n"
-        text += f"✅ <b>Возврат возможен:</b>\n"
-        text += f"• Полный возврат {plan['stars']} ⭐\n"
-        text += f"• Только в течение 48 часов после оплаты\n"
-        text += f"• ОДИН раз на аккаунт\n\n"
-        text += f"Хотите отменить с возвратом?"
-    
+        text += f"• Полная стоимость: {plan['stars']} ⭐\n\n"
+        text += f"⚠️ При отмене подписка будет деактивирована <b>без возврата</b>.\n"
+        text += f"Для возврата средств — свяжитесь с администратором.\n\n"
+        text += f"Вы хотите отменить подписку?"
+
     await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
 @dp.callback_query(F.data == "cancel_current")
@@ -1004,46 +1255,57 @@ async def cancel_current_subscription(callback: CallbackQuery):
         await callback.answer("❌ Ошибка: план не найден", show_alert=True)
         return
     
-    has_used_refund = db.has_user_used_refund(callback.from_user.id)
     payment_info = db.get_payment_by_license(license_key)
-    
+
     db.deactivate_license(license_key)
-    
-    db.cursor.execute('''
-        UPDATE users SET 
-            subscription_plan = NULL, 
-            license_key = NULL, 
-            subscription_end_date = NULL
-        WHERE telegram_id = ?
-    ''', (callback.from_user.id,))
-    db.conn.commit()
-    
+    db.clear_user_subscription(callback.from_user.id)
+
+    # Остановка контейнера/уведомление при отмене подписки
+    plan_name = plan["name"]
+    deployment_info = db.get_deployment_info(callback.from_user.id)
+    dep_status = deployment_info[0] if deployment_info else None
+    if plan_name == "HOSTING" and dep_status in ("running", "pending_setup"):
+        import docker_manager
+        await docker_manager.remove_container(callback.from_user.id)
+        db.update_deployment_status(callback.from_user.id, "stopped")
+        db.update_container_id(callback.from_user.id, None)
+    elif plan_name == "HOSTING-PRO" and dep_status in ("running", "awaiting_admin", "pending_setup"):
+        db.update_deployment_status(callback.from_user.id, "stopped")
+        uname = f"@{callback.from_user.username}" if callback.from_user.username else f"ID:{callback.from_user.id}"
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(
+                    admin_id,
+                    f"⚠️ <b>HOSTING-PRO: подписка отменена</b>\n\n"
+                    f"👤 {uname} (ID: <code>{callback.from_user.id}</code>)\n"
+                    f"Необходимо удалить VPS / остановить сервис.",
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+
     end_date = datetime.fromisoformat(user[5]) if user[5] else datetime.now()
     days_left = max(0, (end_date - datetime.now()).days)
-    
+
     refund_info = ""
-    
-    if callback.from_user.id == ADMIN_ID or (not has_used_refund and payment_info):
+
+    if callback.from_user.id in ADMIN_IDS and payment_info:
         try:
             await callback.message.edit_text("🔄 Выполняется возврат средств...", parse_mode=ParseMode.HTML)
-            
+
             refund_success = await refund_star_payment(
                 telegram_id=callback.from_user.id,
                 payment_id=payment_info[4],
                 stars_amount=plan["stars"]
             )
-            
+
             if refund_success:
                 refund_info = f"\n💰 <b>Возврат выполнен!</b> {plan['stars']} ⭐ возвращено.\n"
-                if callback.from_user.id != ADMIN_ID:
-                    db.mark_refund_used(callback.from_user.id)
             else:
                 refund_info = f"\n⚠️ <b>Автоматический возврат не удался.</b>\nСвяжитесь с @Dimopster.\n"
         except Exception as e:
             logger.error(f"Ошибка при возврате: {e}")
             refund_info = f"\n⚠️ <b>Ошибка возврата.</b> Свяжитесь с @Dimopster.\n"
-    elif has_used_refund:
-        refund_info = "\n❌ Возврат недоступен (уже использован).\n"
     
     queued = db.get_queued_subscription(callback.from_user.id)
     queue_activated_info = ""
@@ -1107,34 +1369,28 @@ async def cancel_queued_subscription(callback: CallbackQuery):
     queued_plan = SUBSCRIPTION_PLANS.get(queued[3], {})
     payment_id = queued[5]
     stars_amount = queued[4]
-    
-    has_used_refund = db.has_user_used_refund(callback.from_user.id)
-    
+
     db.delete_queued_subscription(callback.from_user.id)
-    
+
     refund_info = ""
-    
-    if callback.from_user.id == ADMIN_ID or (not has_used_refund and payment_id):
+
+    if callback.from_user.id in ADMIN_IDS and payment_id:
         try:
             await callback.message.edit_text("🔄 Выполняется возврат средств...", parse_mode=ParseMode.HTML)
-            
+
             refund_success = await refund_star_payment(
                 telegram_id=callback.from_user.id,
                 payment_id=payment_id,
                 stars_amount=stars_amount
             )
-            
+
             if refund_success:
                 refund_info = f"\n💰 <b>Возврат выполнен!</b> {stars_amount} ⭐ возвращено.\n"
-                if callback.from_user.id != ADMIN_ID:
-                    db.mark_refund_used(callback.from_user.id)
             else:
                 refund_info = f"\n⚠️ <b>Автоматический возврат не удался.</b>\nСвяжитесь с @Dimopster.\nID платежа: <code>{payment_id}</code>\n"
         except Exception as e:
             logger.error(f"Ошибка при возврате очереди: {e}")
             refund_info = f"\n⚠️ <b>Ошибка возврата.</b> Свяжитесь с @Dimopster.\n"
-    elif has_used_refund:
-        refund_info = "\n❌ Возврат недоступен (уже использован ранее).\n"
     
     keyboard = [
         [InlineKeyboardButton(text="🔄 Продлить подписку", callback_data="renew_subscription")],
@@ -1404,24 +1660,13 @@ async def send_reminder_notifications():
                 else:
                     continue
                 
-                keyboard = [
-                    [InlineKeyboardButton(text="🔄 Продлить подписку", callback_data="renew_subscription")],
-                    [InlineKeyboardButton(text="🔑 Проверить лицензию", callback_data="my_license")]
-                ]
-                reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-                
                 try:
-                    await bot.send_message(
-                        chat_id=telegram_id,
-                        text=message_text,
-                        reply_markup=reply_markup,
-                        parse_mode=ParseMode.HTML
-                    )
-                    
+                    await notify_user(telegram_id, message_text)
+
                     # Отмечаем напоминание как отправленное
                     db.mark_reminder_sent(reminder_id)
                     logger.info(f"Отправлено напоминание {reminder_type} пользователю {telegram_id} ({username})")
-                    
+
                 except Exception as e:
                     logger.error(f"Ошибка при отправке напоминания пользователю {telegram_id}: {e}")
                     # Помечаем напоминание как отправленное, чтобы не пытаться снова
@@ -1437,7 +1682,7 @@ async def send_reminder_notifications():
 @dp.message(Command("refund"))
 async def cmd_refund(message: Message):
     """Команда для возврата оплаты (только для админа)"""
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Эта команда только для администратора")
         return
     
@@ -1478,23 +1723,15 @@ async def cmd_refund(message: Message):
             if user[3]:  # license_key
                 # Деактивируем лицензию
                 db.deactivate_license(user[3])
-                
-                # Обновляем запись пользователя (очищаем данные о подписке)
-                db.cursor.execute('''
-                    UPDATE users SET 
-                        subscription_plan = NULL, 
-                        license_key = NULL, 
-                        subscription_end_date = NULL
-                    WHERE telegram_id = ?
-                ''', (telegram_id,))
-                db.conn.commit()
-                
+                db.clear_user_subscription(telegram_id)
+
                 # Ищем запрос на возврат для этого пользователя
-                db.cursor.execute('''
-                    SELECT * FROM refund_requests 
+                cursor = db.conn.cursor()
+                cursor.execute('''
+                    SELECT * FROM refund_requests
                     WHERE user_id = ? AND license_key = ? AND status = 'pending'
                 ''', (telegram_id, user[3]))
-                refund_request = db.cursor.fetchone()
+                refund_request = cursor.fetchone()
                 
                 if refund_request:
                     db.update_refund_status(refund_request[0], "approved")
@@ -1509,14 +1746,9 @@ async def cmd_refund(message: Message):
                 parse_mode=ParseMode.HTML
             )
 
-            keyboard = [
-                [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main")]
-            ]
-            reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-            
             # Уведомляем пользователя о возврате
             try:
-                await bot.send_message(
+                await notify_user(
                     telegram_id,
                     f"✅ <b>Ваш возврат обработан!</b>\n\n"
                     f"Сумма: {stars_amount or 'полная'} ⭐\n"
@@ -1524,8 +1756,6 @@ async def cmd_refund(message: Message):
                     f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
                     f"Средства возвращены на ваш счет.\n"
                     f"Ваша подписка отменена.",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=reply_markup
                 )
             except Exception as e:
                 logger.error(f"Не удалось уведомить пользователя {telegram_id}: {e}")
@@ -1557,9 +1787,12 @@ async def my_license(callback: CallbackQuery):
     queued = db.get_queued_subscription(callback.from_user.id)
     
     if not active_license and not queued:
-        keyboard = [[InlineKeyboardButton(text="📦 Выбрать тариф", callback_data="select_plan")]]
+        keyboard = [
+            [InlineKeyboardButton(text="📦 Выбрать тариф", callback_data="select_plan")],
+            [InlineKeyboardButton(text="⬅️ Назад ⬅️", callback_data="back_to_main")],
+        ]
         reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-        
+
         await callback.message.edit_text(
             "❌ У вас нет активной подписки.\n\n"
             "Выберите тариф для начала работы:",
@@ -1574,11 +1807,10 @@ async def my_license(callback: CallbackQuery):
         end_date = datetime.fromisoformat(active_license[5]) if active_license[5] else None
         license_key = active_license[3]
         
-        has_used_refund = db.has_user_used_refund(callback.from_user.id)
-        if callback.from_user.id == ADMIN_ID:
-            refund_status = "👑 БЕЗГРАНИЧНО (режим админа)"
+        if callback.from_user.id in ADMIN_IDS:
+            refund_status = "👑 Доступен (админ)"
         else:
-            refund_status = "❌ Использован" if has_used_refund else "✅ Доступен"
+            refund_status = "📩 Через администратора"
         
         license_info += f"🔑 <b>Ваш лицензионный ключ:</b>\n<code>{license_key}</code>\n\n"
         license_info += f"📋 <b>Текущая подписка:</b>\n"
@@ -1614,7 +1846,7 @@ async def my_license(callback: CallbackQuery):
 
 @dp.message(Command("reset_sub"))
 async def reset_sub(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Эта команда только для администратора")
         return
     
@@ -1625,14 +1857,13 @@ async def reset_sub(message: Message):
     
     queued = db.get_queued_subscription(message.from_user.id)
     
-    db.cursor.execute('''
+    cursor = db.conn.cursor()
+    cursor.execute('''
         UPDATE users SET subscription_end_date = ? WHERE telegram_id = ?
     ''', ('2020-01-01T00:00:00', message.from_user.id))
-    
-    db.cursor.execute('''
+    cursor.execute('''
         UPDATE license_keys SET expires_at = ? WHERE key = ?
     ''', ('2020-01-01T00:00:00', active_license[3]))
-    
     db.conn.commit()
     
     queue_info = ""
@@ -1652,7 +1883,7 @@ async def reset_sub(message: Message):
 
 @dp.message(Command("refund_status"))
 async def refund_status(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Эта команда только для администратора")
         return
     
@@ -1684,7 +1915,7 @@ async def refund_status(message: Message):
 
 @dp.message(Command("reset_refund"))
 async def reset_refund(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Эта команда только для администратора")
         return
     
@@ -1713,7 +1944,7 @@ async def reset_refund(message: Message):
 
 @dp.message(Command("set_refund_used"))
 async def set_refund_used(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Эта команда только для администратора")
         return
     
@@ -1746,40 +1977,138 @@ async def bot_settings_menu(callback: CallbackQuery):
     if not active_license:
         await callback.answer("❌ Для доступа к настройкам нужна активная подписка", show_alert=True)
         return
-    
+
+    plan_name = db.get_user_plan_name(callback.from_user.id)
+
+    # SELF-HOST: показываем только ключ и документацию
+    if plan_name == "SELF-HOST":
+        keyboard = [
+            [InlineKeyboardButton(text="🔑 Мой лицензионный ключ", callback_data="my_license")],
+            [InlineKeyboardButton(text="📖 Документация", url="https://seventyzero.github.io/tgbotnft-docs/")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await callback.message.edit_text(
+            "📦 <b>SELF-HOST</b>\n\n"
+            "Ваш тариф предполагает самостоятельную настройку бота на вашем сервере.\n\n"
+            "Используйте лицензионный ключ и документацию для установки.",
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
     settings = db.get_bot_settings(callback.from_user.id)
-    bot_token = settings[0] if settings and settings[0] else None
-    api_id = settings[1] if settings and settings[1] else None
-    api_hash = settings[2] if settings and settings[2] else None
-    
-    status_token = "✅" if bot_token else "❌"
-    status_api_id = "✅" if api_id else "❌"
-    status_api_hash = "✅" if api_hash else "❌"
-    
-    all_configured = bot_token and api_id and api_hash
-    
-    text = (
-        f"⚙️ <b>Настройки бота</b>\n\n"
-        f"Для работы вашего бота-скупщика подарков необходимо настроить:\n\n"
+    bot_token_val = settings[0] if settings and settings[0] else None
+    session_string = db.get_session_string(callback.from_user.id)
+    deployment_info = db.get_deployment_info(callback.from_user.id)
+    deployment_status = deployment_info[0] if deployment_info else None
+
+    status_token = "✅" if bot_token_val else "❌"
+    status_session = "✅" if session_string else "❌"
+    all_configured = bot_token_val and session_string
+
+    # Автозапуск для HOSTING: если всё настроено и ожидает setup
+    if plan_name == "HOSTING" and all_configured and deployment_status == "pending_setup":
+        import docker_manager
+        user = db.get_user(callback.from_user.id)
+        license_key = user[3] if user else None
+        api_id = settings[1] if settings and len(settings) > 1 else ""
+        api_hash = settings[2] if settings and len(settings) > 2 else ""
+        container_id = await docker_manager.start_container(
+            telegram_id=callback.from_user.id,
+            bot_token=bot_token_val,
+            api_id=api_id or "",
+            api_hash=api_hash or "",
+            session_string=session_string,
+            license_key=license_key or "",
+        )
+        if container_id:
+            db.update_deployment_status(callback.from_user.id, "running")
+            db.update_container_id(callback.from_user.id, container_id)
+            deployment_status = "running"
+        else:
+            deployment_status = "pending_setup"
+
+    # Автоуведомление для HOSTING-PRO: если всё настроено и ожидает setup -> awaiting_admin
+    if plan_name == "HOSTING-PRO" and all_configured and deployment_status == "pending_setup":
+        db.update_deployment_status(callback.from_user.id, "awaiting_admin")
+        deployment_status = "awaiting_admin"
+        uname = f"@{callback.from_user.username}" if callback.from_user.username else f"ID:{callback.from_user.id}"
+        for admin_id in ADMIN_IDS:
+            try:
+                admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="✅ Деплой выполнен", callback_data=f"admin_deploy_done_{callback.from_user.id}")],
+                    [InlineKeyboardButton(text="👤 Карточка", callback_data=f"admin_user_{callback.from_user.id}")],
+                ])
+                await bot.send_message(
+                    admin_id,
+                    f"🚀 <b>HOSTING-PRO: готов к деплою!</b>\n\n"
+                    f"👤 {uname} (ID: <code>{callback.from_user.id}</code>)\n"
+                    f"Все данные настроены. Необходим ручной деплой на VPS.",
+                    reply_markup=admin_kb,
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception as e:
+                logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
+
+    # Формируем текст
+    text = f"⚙️ <b>Управление ботом ({plan_name})</b>\n\n"
+
+    if plan_name == "HOSTING":
+        if deployment_status == "running":
+            text += "🟢 <b>Статус:</b> Бот запущен\n\n"
+        elif deployment_status == "stopped":
+            text += "🔴 <b>Статус:</b> Бот остановлен\n\n"
+        elif deployment_status == "pending_setup":
+            text += "⚙️ <b>Статус:</b> Ожидает настройки\n\n"
+        else:
+            text += f"⚪ <b>Статус:</b> {deployment_status or 'не определён'}\n\n"
+    elif plan_name == "HOSTING-PRO":
+        if deployment_status == "awaiting_admin":
+            text += "⏳ <b>Статус:</b> Ожидание развёртывания администратором\n\n"
+        elif deployment_status == "running":
+            text += "🟢 <b>Статус:</b> Бот запущен на VPS\n\n"
+        elif deployment_status == "stopped":
+            text += "🔴 <b>Статус:</b> Бот остановлен\n\n"
+        elif deployment_status == "pending_setup":
+            text += "⚙️ <b>Статус:</b> Ожидает настройки\n\n"
+        else:
+            text += f"⚪ <b>Статус:</b> {deployment_status or 'не определён'}\n\n"
+
+    text += (
         f"{status_token} <b>Bot Token</b> — токен от @BotFather\n"
-        f"{status_api_id} <b>API_ID</b> — с my.telegram.org\n"
-        f"{status_api_hash} <b>API_HASH</b> — с my.telegram.org\n\n"
+        f"{status_session} <b>Telegram сессия</b> — авторизация аккаунта\n\n"
     )
-    
-    if all_configured:
-        text += "✅ <b>Все данные настроены!</b>\n\nТеперь пройдите авторизацию на сайте."
+
+    if all_configured and deployment_status == "running":
+        text += "✅ <b>Все данные настроены!</b> Бот работает."
+    elif all_configured and deployment_status == "awaiting_admin":
+        text += "✅ <b>Все данные настроены!</b> Ожидайте развёртывания."
+    elif all_configured:
+        text += "✅ <b>Все данные настроены!</b>"
     else:
         text += "⚠️ <b>Необходимо заполнить все данные</b> для активации бота."
-    
+
     keyboard = [
         [InlineKeyboardButton(text=f"{status_token} Изменить Bot Token", callback_data="setup_bot_token")],
-        [InlineKeyboardButton(text=f"{status_api_id} Изменить API_ID", callback_data="setup_api_id")],
-        [InlineKeyboardButton(text=f"{status_api_hash} Изменить API_HASH", callback_data="setup_api_hash")],
-        [InlineKeyboardButton(text="🔐 Авторизация на сайте", url="https://pluttan.github.io/Telegram-Bot-NFT-docs/auth")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
+        [InlineKeyboardButton(text=f"{status_session} Авторизоваться", callback_data="generate_auth_link")],
     ]
+
+    # Кнопки управления контейнером (только HOSTING с настроенными данными)
+    if plan_name == "HOSTING" and all_configured:
+        if deployment_status == "running":
+            keyboard.append([
+                InlineKeyboardButton(text="⏹ Остановить", callback_data="manage_bot_stop"),
+                InlineKeyboardButton(text="🔄 Перезапустить", callback_data="manage_bot_restart"),
+            ])
+            keyboard.append([InlineKeyboardButton(text="📋 Логи", callback_data="manage_bot_logs")])
+            keyboard.append([InlineKeyboardButton(text="📊 Статус", callback_data="manage_bot_status")])
+        elif deployment_status in ("stopped", "pending_setup"):
+            keyboard.append([InlineKeyboardButton(text="▶️ Запустить", callback_data="manage_bot_start")])
+
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")])
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
+
     await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
 @dp.callback_query(F.data == "setup_bot_token")
@@ -1817,195 +2146,261 @@ async def process_bot_token(message: Message, state: FSMContext):
     
     db.update_bot_token(message.from_user.id, token)
     await state.clear()
-    
+
     keyboard = [
-        [InlineKeyboardButton(text="➡️ Настроить API_ID", callback_data="setup_api_id")],
+        [InlineKeyboardButton(text="➡️ Авторизоваться", callback_data="generate_auth_link")],
         [InlineKeyboardButton(text="⬅️ К настройкам", callback_data="bot_settings")]
     ]
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
+
     await message.answer(
         "✅ <b>Bot Token сохранён!</b>\n\n"
-        "Теперь настройте API_ID и API_HASH с сайта my.telegram.org",
+        "Теперь пройдите авторизацию Telegram для работы бота.",
         reply_markup=reply_markup,
         parse_mode=ParseMode.HTML
     )
 
-@dp.callback_query(F.data == "setup_api_id")
-async def setup_api_id(callback: CallbackQuery, state: FSMContext):
-    keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data="bot_settings")]]
-    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
-    await callback.message.edit_text(
-        "🔑 <b>Настройка API_ID</b>\n\n"
-        "Отправьте ваш API_ID с сайта my.telegram.org\n\n"
-        "<b>Как получить API_ID:</b>\n"
-        "1. Перейдите на <a href='https://my.telegram.org'>my.telegram.org</a>\n"
-        "2. Войдите под своим номером телефона\n"
-        "3. Перейдите в раздел «API development tools»\n"
-        "4. Скопируйте значение <b>App api_id</b>\n\n"
-        "Формат: число, например <code>12345678</code>",
-        reply_markup=reply_markup,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True
-    )
-    await state.set_state(BotSetupStates.waiting_api_id)
-
-@dp.message(BotSetupStates.waiting_api_id)
-async def process_api_id(message: Message, state: FSMContext):
-    api_id = message.text.strip()
-    
-    if not api_id.isdigit():
-        await message.answer(
-            "❌ API_ID должен быть числом.\n\n"
-            "Например: <code>12345678</code>\n\n"
-            "Попробуйте ещё раз:",
-            parse_mode=ParseMode.HTML
-        )
+@dp.callback_query(F.data == "generate_auth_link")
+async def generate_auth_link(callback: CallbackQuery):
+    active_license = db.get_active_license(callback.from_user.id)
+    if not active_license:
+        await callback.answer("❌ Для доступа нужна активная подписка", show_alert=True)
         return
-    
-    db.update_api_id(message.from_user.id, api_id)
-    await state.clear()
-    
+
+    from web_auth import generate_auth_token
+    token = generate_auth_token(callback.from_user.id)
+    url = f"{WEB_AUTH_HOST}/auth/{token}"
+
     keyboard = [
-        [InlineKeyboardButton(text="➡️ Настроить API_HASH", callback_data="setup_api_hash")],
         [InlineKeyboardButton(text="⬅️ К настройкам", callback_data="bot_settings")]
     ]
+    # Telegram требует HTTPS для URL-кнопок, поэтому если хост не https — отправляем ссылку текстом
+    if url.startswith("https://"):
+        keyboard.insert(0, [InlineKeyboardButton(text="🔐 Открыть авторизацию", url=url)])
+        link_text = ""
+    else:
+        link_text = f"\n🔗 <code>{url}</code>\n\nСкопируйте ссылку и откройте в браузере.\n"
+
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
-    await message.answer(
-        "✅ <b>API_ID сохранён!</b>\n\n"
-        "Теперь настройте API_HASH",
+
+    await callback.message.edit_text(
+        "🔐 <b>Авторизация Telegram</b>\n\n"
+        "На странице авторизации вы сможете:\n"
+        "1. Указать Bot Token\n"
+        "2. Ввести номер телефона\n"
+        "3. Подтвердить код из Telegram\n\n"
+        f"{link_text}"
+        "⏱ Ссылка действительна <b>15 минут</b>.",
         reply_markup=reply_markup,
         parse_mode=ParseMode.HTML
     )
 
-@dp.callback_query(F.data == "setup_api_hash")
-async def setup_api_hash(callback: CallbackQuery, state: FSMContext):
-    keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data="bot_settings")]]
-    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
-    await callback.message.edit_text(
-        "🔐 <b>Настройка API_HASH</b>\n\n"
-        "Отправьте ваш API_HASH с сайта my.telegram.org\n\n"
-        "<b>Как получить API_HASH:</b>\n"
-        "1. Перейдите на <a href='https://my.telegram.org'>my.telegram.org</a>\n"
-        "2. Войдите под своим номером телефона\n"
-        "3. Перейдите в раздел «API development tools»\n"
-        "4. Скопируйте значение <b>App api_hash</b>\n\n"
-        "Формат: строка из 32 символов, например <code>a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6</code>",
-        reply_markup=reply_markup,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True
-    )
-    await state.set_state(BotSetupStates.waiting_api_hash)
+# ==================== УПРАВЛЕНИЕ КОНТЕЙНЕРАМИ ====================
 
-@dp.message(BotSetupStates.waiting_api_hash)
-async def process_api_hash(message: Message, state: FSMContext):
-    api_hash = message.text.strip()
-    
-    if len(api_hash) != 32:
-        await message.answer(
-            "❌ API_HASH должен состоять из 32 символов.\n\n"
-            "Например: <code>a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6</code>\n\n"
-            "Попробуйте ещё раз:",
-            parse_mode=ParseMode.HTML
-        )
+@dp.callback_query(F.data == "manage_bot_start")
+async def manage_bot_start_cb(callback: CallbackQuery):
+    import docker_manager
+    plan_name = db.get_user_plan_name(callback.from_user.id)
+    if plan_name != "HOSTING":
+        await callback.answer("❌ Эта функция доступна только на тарифе HOSTING", show_alert=True)
         return
-    
-    db.update_api_hash(message.from_user.id, api_hash)
-    await state.clear()
-    
-    settings = db.get_bot_settings(message.from_user.id)
-    all_configured = settings and settings[0] and settings[1] and settings[2]
-    
-    keyboard = [[InlineKeyboardButton(text="⬅️ К настройкам", callback_data="bot_settings")]]
-    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
-    if all_configured:
-        await message.answer(
-            "🎉 <b>Все настройки завершены!</b>\n\n"
-            "✅ Bot Token — настроен\n"
-            "✅ API_ID — настроен\n"
-            "✅ API_HASH — настроен\n\n"
-            "Теперь пройдите авторизацию Telegram для покупки подарков!",
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.HTML
+
+    settings = db.get_bot_settings(callback.from_user.id)
+    bot_token_val = settings[0] if settings and settings[0] else None
+    session_string = db.get_session_string(callback.from_user.id)
+    if not bot_token_val or not session_string:
+        await callback.answer("❌ Сначала настройте Bot Token и авторизацию", show_alert=True)
+        return
+
+    user = db.get_user(callback.from_user.id)
+    license_key = user[3] if user else ""
+    api_id = settings[1] if settings and len(settings) > 1 else ""
+    api_hash = settings[2] if settings and len(settings) > 2 else ""
+
+    await callback.answer("🔄 Запускаю бота...")
+    container_id = await docker_manager.start_container(
+        telegram_id=callback.from_user.id,
+        bot_token=bot_token_val,
+        api_id=api_id or "",
+        api_hash=api_hash or "",
+        session_string=session_string,
+        license_key=license_key or "",
+    )
+    if container_id:
+        db.update_deployment_status(callback.from_user.id, "running")
+        db.update_container_id(callback.from_user.id, container_id)
+        await callback.message.edit_text(
+            "✅ <b>Бот успешно запущен!</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ К управлению", callback_data="bot_settings")]
+            ]),
+            parse_mode=ParseMode.HTML,
         )
     else:
-        await message.answer(
-            "✅ <b>API_HASH сохранён!</b>\n\n"
-            "Проверьте остальные настройки.",
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.HTML
+        await callback.message.edit_text(
+            "❌ <b>Не удалось запустить бота.</b>\nПроверьте настройки или обратитесь в поддержку.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ К управлению", callback_data="bot_settings")]
+            ]),
+            parse_mode=ParseMode.HTML,
         )
+
+
+@dp.callback_query(F.data == "manage_bot_stop")
+async def manage_bot_stop_cb(callback: CallbackQuery):
+    import docker_manager
+    plan_name = db.get_user_plan_name(callback.from_user.id)
+    if plan_name != "HOSTING":
+        await callback.answer("❌ Эта функция доступна только на тарифе HOSTING", show_alert=True)
+        return
+
+    await callback.answer("🔄 Останавливаю бота...")
+    success = await docker_manager.stop_container(callback.from_user.id)
+    if success:
+        db.update_deployment_status(callback.from_user.id, "stopped")
+    await callback.message.edit_text(
+        "✅ <b>Бот остановлен.</b>" if success else "❌ <b>Не удалось остановить бота.</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ К управлению", callback_data="bot_settings")]
+        ]),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@dp.callback_query(F.data == "manage_bot_restart")
+async def manage_bot_restart_cb(callback: CallbackQuery):
+    import docker_manager
+    plan_name = db.get_user_plan_name(callback.from_user.id)
+    if plan_name != "HOSTING":
+        await callback.answer("❌ Эта функция доступна только на тарифе HOSTING", show_alert=True)
+        return
+
+    await callback.answer("🔄 Перезапускаю бота...")
+    success = await docker_manager.restart_container(callback.from_user.id)
+    await callback.message.edit_text(
+        "✅ <b>Бот перезапущен.</b>" if success else "❌ <b>Не удалось перезапустить бота.</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ К управлению", callback_data="bot_settings")]
+        ]),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@dp.callback_query(F.data == "manage_bot_logs")
+async def manage_bot_logs_cb(callback: CallbackQuery):
+    import docker_manager
+    plan_name = db.get_user_plan_name(callback.from_user.id)
+    if plan_name != "HOSTING":
+        await callback.answer("❌ Эта функция доступна только на тарифе HOSTING", show_alert=True)
+        return
+
+    logs = await docker_manager.get_container_logs(callback.from_user.id, lines=50)
+    # Ограничим длину для Telegram (4096 символов)
+    if len(logs) > 3800:
+        logs = "...\n" + logs[-3800:]
+
+    await callback.message.edit_text(
+        f"📋 <b>Логи бота</b> (последние 50 строк):\n\n<pre>{logs}</pre>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Обновить", callback_data="manage_bot_logs")],
+            [InlineKeyboardButton(text="⬅️ К управлению", callback_data="bot_settings")]
+        ]),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@dp.callback_query(F.data == "manage_bot_status")
+async def manage_bot_status_cb(callback: CallbackQuery):
+    import docker_manager
+    plan_name = db.get_user_plan_name(callback.from_user.id)
+    if plan_name != "HOSTING":
+        await callback.answer("❌ Эта функция доступна только на тарифе HOSTING", show_alert=True)
+        return
+
+    status = await docker_manager.get_container_status(callback.from_user.id)
+    status_emoji = {"running": "🟢", "stopped": "🔴", "not_found": "⚪"}.get(status, "⚪")
+
+    await callback.message.edit_text(
+        f"📊 <b>Статус контейнера</b>\n\n{status_emoji} {status}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Обновить", callback_data="manage_bot_status")],
+            [InlineKeyboardButton(text="⬅️ К управлению", callback_data="bot_settings")]
+        ]),
+        parse_mode=ParseMode.HTML,
+    )
+
+# ==================== КОНЕЦ УПРАВЛЕНИЯ КОНТЕЙНЕРАМИ ====================
 
 @dp.callback_query(F.data == "help")
 async def help_command(callback: CallbackQuery):
-    help_text = """
-ℹ️ <b>Помощь - Service Bot</b>
+    help_text = (
+        "ℹ️ <b>Помощь - Service Bot</b>\n\n"
+        "📖 Полная документация по настройке бота:\n"
+        "https://seventyzero.github.io/tgbotnft-docs/\n\n"
+        "Поддержка:\n"
+        "Если у вас возникли вопросы, свяжитесь с @Dimopster."
+    )
 
-📄 Прочитайте файл для получения полной информации о настройке бота.
+    keyboard = [
+        [InlineKeyboardButton(text="📩 Связаться с админом", callback_data="contact_admin")],
+        [InlineKeyboardButton(text="⬅️ Назад ⬅️", callback_data="back_to_main")],
+    ]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-Поддержка:
-Если у вас возникли вопросы, свяжитесь с @Dimopster.
-    """
-    
+    await callback.message.edit_text(help_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+@dp.callback_query(F.data == "contact_admin")
+async def contact_admin(callback: CallbackQuery, state: FSMContext):
     keyboard = [[InlineKeyboardButton(text="⬅️ Назад ⬅️", callback_data="back_to_main")]]
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
-    # Сначала отправляем текст
-    await callback.message.edit_text(help_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-    
-    # Отправляем файл
-    try:
-        # Проверяем наличие файла с разными возможными названиями
-        possible_files = ["README.pdf", "Инструкция.pdf", "instruction.pdf"]
-        file_to_send = None
-        
-        for file_name in possible_files:
-            if os.path.exists(file_name):
-                file_to_send = FSInputFile(file_name, filename="Инструкция.pdf")
-                break
-        
-        if file_to_send:
-            await bot.send_document(
-                chat_id=callback.message.chat.id,
-                document=file_to_send,
-                caption="📖 Полная инструкция по настройке бота"
+    await callback.message.edit_text(
+        "📩 <b>Связаться с администратором</b>\n\n"
+        "Напишите ваше сообщение, и оно будет отправлено администратору:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+    await state.set_state(UserStates.waiting_admin_message)
+
+@dp.message(UserStates.waiting_admin_message)
+async def user_admin_message_handler(message: Message, state: FSMContext):
+    await state.clear()
+    tid = message.from_user.id
+    uname = f"@{message.from_user.username}" if message.from_user.username else f"ID:{tid}"
+    text = message.text.strip() if message.text else "(пустое сообщение)"
+
+    for admin_id in ADMIN_IDS:
+        try:
+            keyboard = [[InlineKeyboardButton(text="✉️ Ответить", callback_data=f"admin_msg_{tid}"),
+                          InlineKeyboardButton(text="👤 Карточка", callback_data=f"admin_user_{tid}")]]
+            reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+            await bot.send_message(
+                admin_id,
+                f"📩 <b>Сообщение от пользователя</b>\n\n"
+                f"👤 {uname} (ID: <code>{tid}</code>)\n\n"
+                f"{text}",
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML,
             )
-        else:
-            await callback.message.answer("❌ Файл инструкции не найден. Свяжитесь с поддержкой.")
-    
-    except Exception as e:
-        logger.error(f"Ошибка при отправке файла: {e}")
-        await callback.message.answer("❌ Ошибка при отправке файла инструкции.")
+        except Exception as e:
+            logger.error(f"Не удалось отправить сообщение админу {admin_id}: {e}")
+
+    await delete_tracked_messages(tid)
+    reply_markup = build_main_menu_keyboard(tid)
+    msg = await message.answer(
+        "✅ Ваше сообщение отправлено администратору. Ожидайте ответа.",
+        reply_markup=reply_markup,
+    )
+    user_menu_message[tid] = msg.message_id
 
 @dp.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: CallbackQuery):
-    active_license = db.get_active_license(callback.from_user.id)
-    
-    keyboard = []
-    if active_license:
-        keyboard.append([InlineKeyboardButton(text="🔄 Продлить подписку", callback_data="renew_subscription")])
-    else:
-        keyboard.append([InlineKeyboardButton(text="📦 Выбрать тариф", callback_data="select_plan")])
-    
-    keyboard.append([InlineKeyboardButton(text="🔑 Мой лицензионный ключ", callback_data="my_license")])
-    
-    if active_license:
-        keyboard.append([InlineKeyboardButton(text="⚙️ Настройки бота", callback_data="bot_settings")])
-        keyboard.append([InlineKeyboardButton(text="❌ Отменить подписку", callback_data="cancel_subscription")])
-    
-    keyboard.append([InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")])
-    
-    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
+    reply_markup = build_main_menu_keyboard(callback.from_user.id)
     await callback.message.edit_text(
         "👋 Добро пожаловать в Service Bot!\n\n"
         "Выберите действие ниже:",
         reply_markup=reply_markup
     )
+    user_menu_message[callback.from_user.id] = callback.message.message_id
 
 async def process_queued_subscriptions():
     while True:
@@ -2043,22 +2438,14 @@ async def process_queued_subscriptions():
                 db.delete_queued_subscription(telegram_id)
                 
                 try:
-                    keyboard = [
-                        [InlineKeyboardButton(text="🔑 Мой лицензионный ключ", callback_data="my_license")],
-                        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main")]
-                    ]
-                    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-                    
-                    await bot.send_message(
-                        chat_id=telegram_id,
-                        text=f"🎉 <b>Подписка автоматически продлена!</b>\n\n"
-                             f"📋 <b>Детали:</b>\n"
-                             f"• Тариф: {plan['name']}\n"
-                             f"• Срок: {plan['duration_days']} дней\n"
-                             f"• Действует до: {datetime.fromisoformat(end_date).strftime('%d.%m.%Y')}\n\n"
-                             f"Новый лицензионный ключ сгенерирован.",
-                        reply_markup=reply_markup,
-                        parse_mode=ParseMode.HTML
+                    await notify_user(
+                        telegram_id,
+                        f"🎉 <b>Подписка автоматически продлена!</b>\n\n"
+                        f"📋 <b>Детали:</b>\n"
+                        f"• Тариф: {plan['name']}\n"
+                        f"• Срок: {plan['duration_days']} дней\n"
+                        f"• Действует до: {datetime.fromisoformat(end_date).strftime('%d.%m.%Y')}\n\n"
+                        f"Новый лицензионный ключ сгенерирован.",
                     )
                     logger.info(f"Активирована подписка из очереди для {telegram_id}")
                 except Exception as e:
@@ -2070,11 +2457,831 @@ async def process_queued_subscriptions():
             logger.error(f"Ошибка в process_queued_subscriptions: {e}")
             await asyncio.sleep(60)
 
+@dp.callback_query(F.data == "contact_admin_refund")
+async def contact_admin_refund(callback: CallbackQuery):
+    """Связаться с админом для возврата средств"""
+    user = db.get_user(callback.from_user.id)
+    plan = SUBSCRIPTION_PLANS.get(user[4], {}) if user and user[4] else {}
+    uname = f"@{callback.from_user.username}" if callback.from_user.username else f"ID:{callback.from_user.id}"
+
+    # Уведомляем всех админов
+    for admin_id in ADMIN_IDS:
+        try:
+            keyboard = [[InlineKeyboardButton(text="👤 Открыть карточку", callback_data=f"admin_user_{callback.from_user.id}")]]
+            reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+            await bot.send_message(
+                admin_id,
+                f"📩 <b>Запрос на возврат</b>\n\n"
+                f"👤 Пользователь: {uname} (ID: <code>{callback.from_user.id}</code>)\n"
+                f"📦 Тариф: {plan.get('name', '—')}\n"
+                f"⭐ Стоимость: {plan.get('stars', '—')} ⭐\n\n"
+                f"Пользователь просит рассмотреть возврат средств.",
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as e:
+            logger.error(f"Не удалось уведомить админа {admin_id}: {e}")
+
+    keyboard = [[InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(
+        "✅ <b>Запрос отправлен!</b>\n\n"
+        "Администратор получил ваш запрос на возврат средств.\n"
+        "Ожидайте ответа.",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+# ==================== АДМИН-ПАНЕЛЬ ====================
+
+def _admin_keyboard() -> InlineKeyboardMarkup:
+    awaiting = db.get_awaiting_admin_users()
+    keyboard = [
+        [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")],
+        [InlineKeyboardButton(text="🔍 Найти пользователя", callback_data="admin_search")],
+        [InlineKeyboardButton(text="💰 Возврат по транзакции", callback_data="admin_refund_txn")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+    ]
+    if awaiting:
+        keyboard.append([InlineKeyboardButton(
+            text=f"🚀 HOSTING-PRO: деплой ({len(awaiting)})",
+            callback_data="admin_hosting_pro"
+        )])
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+@dp.message(Command("admin"))
+async def cmd_admin(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    await state.clear()
+    reply_markup = _admin_keyboard()
+    await message.answer(
+        "🛠 <b>Админ-панель</b>\n\nВыберите действие:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+@dp.callback_query(F.data == "admin_panel")
+async def admin_panel_cb(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    await state.clear()
+    reply_markup = _admin_keyboard()
+    await callback.message.edit_text(
+        "🛠 <b>Админ-панель</b>\n\nВыберите действие:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+@dp.callback_query(F.data == "admin_back")
+async def admin_back_cb(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+    await state.clear()
+    reply_markup = _admin_keyboard()
+    await callback.message.edit_text(
+        "🛠 <b>Админ-панель</b>\n\nВыберите действие:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+# --- Статистика ---
+@dp.callback_query(F.data == "admin_stats")
+async def admin_stats_cb(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    cursor = db.conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM users')
+    total_users = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM users WHERE subscription_end_date > datetime('now') AND license_key IS NOT NULL")
+    active_subs = cursor.fetchone()[0]
+    cursor.execute('SELECT COUNT(*) FROM queued_subscriptions')
+    queued_subs = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM users WHERE subscription_end_date <= datetime('now') AND license_key IS NOT NULL")
+    expired_subs = cursor.fetchone()[0]
+    keyboard = [[InlineKeyboardButton(text="⬅️ В админ-меню", callback_data="admin_back")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(
+        f"📊 <b>Статистика</b>\n\n"
+        f"👥 Всего пользователей: <b>{total_users}</b>\n"
+        f"✅ Активных подписок: <b>{active_subs}</b>\n"
+        f"⏳ В очереди: <b>{queued_subs}</b>\n"
+        f"❌ Истёкших: <b>{expired_subs}</b>",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+# --- HOSTING-PRO: ожидающие деплоя ---
+@dp.callback_query(F.data == "admin_hosting_pro")
+async def admin_hosting_pro_cb(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    awaiting = db.get_awaiting_admin_users()
+    if not awaiting:
+        await callback.answer("Нет пользователей, ожидающих деплоя", show_alert=True)
+        return
+    text = "🚀 <b>HOSTING-PRO: ожидают деплоя</b>\n\n"
+    keyboard = []
+    for u in awaiting:
+        tid = u[1]
+        uname = f"@{u[2]}" if u[2] else f"ID:{tid}"
+        plan_id = u[4]
+        plan_info = SUBSCRIPTION_PLANS.get(plan_id, {})
+        text += f"👤 {uname} (ID: <code>{tid}</code>) — {plan_info.get('name', plan_id)}\n"
+        keyboard.append([
+            InlineKeyboardButton(text=f"✅ Деплой: {uname}", callback_data=f"admin_deploy_done_{tid}"),
+            InlineKeyboardButton(text=f"👤", callback_data=f"admin_user_{tid}"),
+        ])
+    keyboard.append([InlineKeyboardButton(text="⬅️ В админ-меню", callback_data="admin_back")])
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+
+@dp.callback_query(F.data.startswith("admin_deploy_done_"))
+async def admin_deploy_done_cb(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    tid = int(callback.data.replace("admin_deploy_done_", ""))
+    db.update_deployment_status(tid, "running")
+    user = db.get_user(tid)
+    uname = f"@{user[2]}" if user and user[2] else f"ID:{tid}"
+
+    # Уведомить пользователя
+    try:
+        await bot.send_message(
+            tid,
+            "✅ <b>Ваш бот развёрнут!</b>\n\n"
+            "Администратор выполнил деплой на отдельном VPS.\n"
+            "Ваш бот уже запущен и работает.",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        logger.error(f"Не удалось уведомить {tid} о деплое: {e}")
+
+    await callback.message.edit_text(
+        f"✅ <b>Деплой отмечен!</b>\n\n"
+        f"👤 {uname} (ID: <code>{tid}</code>)\n"
+        f"Статус изменён на <b>running</b>.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ В админ-меню", callback_data="admin_back")]
+        ]),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+# --- Список пользователей (пагинация) ---
+def _build_users_page(users: list, page: int, total: int, per_page: int = 10):
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    lines = []
+    for u in users:
+        tid = u[1]
+        uname = f"@{u[2]}" if u[2] else "Без имени"
+        plan = u[4]
+        end = u[5]
+        if plan and end:
+            try:
+                end_dt = datetime.fromisoformat(end)
+                plan_name = SUBSCRIPTION_PLANS.get(plan, {}).get("name", plan)
+                lines.append(f"👤 {uname} (ID: {tid})\n  • Тариф: {plan_name} | До: {end_dt.strftime('%d.%m.%Y')}")
+            except Exception:
+                lines.append(f"👤 {uname} (ID: {tid})\n  • Тариф: {plan}")
+        else:
+            lines.append(f"👤 {uname} (ID: {tid})\n  • Нет подписки")
+    text = f"👥 <b>Пользователи</b> (стр. {page + 1}/{total_pages})\n\n" + "\n\n".join(lines) if lines else "Нет пользователей."
+    keyboard = []
+    # Кнопки пользователей
+    for u in users:
+        tid = u[1]
+        uname = f"@{u[2]}" if u[2] else f"ID:{tid}"
+        keyboard.append([InlineKeyboardButton(text=f"👤 {uname}", callback_data=f"admin_user_{tid}")])
+    # Навигация
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin_users_page_{page - 1}"))
+    nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton(text="▶️ Вперёд", callback_data=f"admin_users_page_{page + 1}"))
+    keyboard.append(nav)
+    keyboard.append([InlineKeyboardButton(text="⬅️ В админ-меню", callback_data="admin_back")])
+    return text, InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+@dp.callback_query(F.data == "admin_users")
+async def admin_users_cb(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    users, total = db.get_users_page(0, 10)
+    text, reply_markup = _build_users_page(users, 0, total)
+    await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+@dp.callback_query(F.data.startswith("admin_users_page_"))
+async def admin_users_page_cb(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    page = int(callback.data.replace("admin_users_page_", ""))
+    users, total = db.get_users_page(page * 10, 10)
+    text, reply_markup = _build_users_page(users, page, total)
+    await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+@dp.callback_query(F.data == "noop")
+async def noop_cb(callback: CallbackQuery):
+    await callback.answer()
+
+# --- Поиск пользователя ---
+@dp.callback_query(F.data == "admin_search")
+async def admin_search_cb(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    await state.set_state(AdminStates.waiting_user_search)
+    keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data="admin_back")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(
+        "🔍 <b>Поиск пользователя</b>\n\nВведите Telegram ID (число) или username:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+@dp.message(AdminStates.waiting_user_search)
+async def admin_search_handler(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    query = message.text.strip().lstrip("@")
+    results = db.search_users(query)
+    await state.clear()
+    if not results:
+        keyboard = [[InlineKeyboardButton(text="⬅️ В админ-меню", callback_data="admin_back")]]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await message.answer("🔍 Ничего не найдено.", reply_markup=reply_markup)
+        return
+    keyboard = []
+    for u in results:
+        tid = u[1]
+        uname = f"@{u[2]}" if u[2] else f"ID:{tid}"
+        keyboard.append([InlineKeyboardButton(text=f"👤 {uname} (ID: {tid})", callback_data=f"admin_user_{tid}")])
+    keyboard.append([InlineKeyboardButton(text="⬅️ В админ-меню", callback_data="admin_back")])
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await message.answer(f"🔍 Найдено: {len(results)}", reply_markup=reply_markup)
+
+# --- Карточка пользователя ---
+@dp.callback_query(F.data.startswith("admin_user_"))
+async def admin_user_card_cb(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    tid = int(callback.data.replace("admin_user_", ""))
+    user = db.get_user(tid)
+    if not user:
+        await callback.answer("❌ Пользователь не найден", show_alert=True)
+        return
+    uname = f"@{user[2]}" if user[2] else "Без имени"
+    created = user[11] if len(user) > 11 and user[11] else "—"
+    plan_id = user[4]
+    license_key = user[3]
+    end_date_str = user[5]
+    has_used_refund = db.has_user_used_refund(tid)
+
+    text = f"👤 Пользователь {uname}\n"
+    text += f"📋 Telegram ID: <code>{tid}</code>\n"
+    text += f"📅 Зарегистрирован: {created}\n\n"
+
+    active = db.get_active_license(tid)
+    if active and plan_id:
+        plan_info = SUBSCRIPTION_PLANS.get(plan_id, {})
+        plan_name = plan_info.get("name", plan_id)
+        text += f"📦 Подписка: {plan_name} ({plan_id})\n"
+        text += f"🔑 Ключ: <code>{license_key}</code>\n"
+        if end_date_str:
+            try:
+                end_dt = datetime.fromisoformat(end_date_str)
+                days_left = max(0, (end_dt - datetime.now()).days)
+                text += f"📅 Действует до: {end_dt.strftime('%d.%m.%Y')}\n"
+                text += f"⏳ Осталось: {days_left} дн.\n"
+            except Exception:
+                text += f"📅 До: {end_date_str}\n"
+        refund_icon = "❌ Использован" if has_used_refund else "✅ Доступен"
+        text += f"💰 Возврат: {refund_icon}\n"
+        # Показать transaction ID последнего платежа
+        payment = db.get_payment_by_license(license_key)
+        if payment:
+            text += f"🧾 Транзакция: <code>{payment[4]}</code>\n"
+    else:
+        text += "📦 Подписка: Нет\n"
+
+    queued = db.get_queued_subscription(tid)
+    if queued:
+        q_plan = SUBSCRIPTION_PLANS.get(queued[3], {})
+        text += f"\n📋 В очереди: {q_plan.get('name', queued[3])}"
+    else:
+        text += "\n📋 В очереди: Нет"
+
+    keyboard = []
+    keyboard.append([InlineKeyboardButton(text="🎁 Выдать подписку", callback_data=f"admin_grant_{tid}")])
+    if active and plan_id:
+        keyboard.append([InlineKeyboardButton(text="❌ Отменить с возвратом", callback_data=f"admin_cancel_refund_{tid}")])
+        keyboard.append([InlineKeyboardButton(text="🚫 Отменить без возврата", callback_data=f"admin_cancel_norefund_{tid}")])
+    keyboard.append([InlineKeyboardButton(text="✉️ Написать сообщение", callback_data=f"admin_msg_{tid}")])
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="admin_users")])
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+# --- Возврат по транзакции ---
+@dp.callback_query(F.data == "admin_refund_txn")
+async def admin_refund_txn_cb(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    await state.set_state(AdminStates.waiting_refund_txn)
+    keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data="admin_back")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(
+        "💰 <b>Возврат по транзакции</b>\n\n"
+        "Введите <b>telegram_payment_charge_id</b> (длинный хеш транзакции):",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+@dp.message(AdminStates.waiting_refund_txn)
+async def admin_refund_txn_handler(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    data = await state.get_data()
+    manual_charge_id = data.get("manual_charge_id")
+
+    # Второй шаг: ввод telegram_id для ручного возврата
+    if manual_charge_id:
+        await state.clear()
+        tid_str = message.text.strip()
+        if not tid_str.isdigit():
+            await message.answer("❌ Telegram ID должен быть числом. Начните заново через /admin.")
+            return
+        tid = int(tid_str)
+        keyboard = [
+            [InlineKeyboardButton(text="✅ Да, вернуть", callback_data=f"armr_{tid}_{manual_charge_id}")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_back")],
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await message.answer(
+            f"💰 <b>Ручной возврат</b>\n\n"
+            f"👤 Telegram ID: <code>{tid}</code>\n"
+            f"🧾 Транзакция: <code>{manual_charge_id}</code>\n\n"
+            f"Выполнить возврат?",
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    # Первый шаг: ввод charge_id
+    charge_id = message.text.strip()
+    await state.clear()
+
+    payment = db.get_payment_by_charge_id(charge_id)
+    if payment:
+        tid = payment[6]
+        uname = f"@{payment[7]}" if payment[7] else f"ID:{tid}"
+        stars = payment[3]
+        created = payment[5] or "—"
+        # charge_id слишком длинный для callback_data (лимит 64), сохраняем в state
+        await state.set_data({"refund_charge_id": charge_id, "refund_tid": tid})
+        keyboard = [
+            [InlineKeyboardButton(text=f"✅ Да, вернуть {stars} ⭐", callback_data="artc_confirm")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_back")],
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await message.answer(
+            f"💰 <b>Платёж найден</b>\n\n"
+            f"👤 Пользователь: {uname} (ID: <code>{tid}</code>)\n"
+            f"⭐ Сумма: {stars}\n"
+            f"🔑 Ключ: <code>{payment[2]}</code>\n"
+            f"📅 Дата: {created}\n"
+            f"🧾 ID: <code>{charge_id}</code>\n\n"
+            f"Выполнить возврат?",
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        await state.set_state(AdminStates.waiting_refund_txn)
+        await state.update_data(manual_charge_id=charge_id)
+        keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data="admin_back")]]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await message.answer(
+            f"⚠️ Платёж с таким ID не найден в базе.\n\n"
+            f"Для ручного возврата введите <b>Telegram ID пользователя</b>:",
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML,
+        )
+
+@dp.callback_query(F.data == "artc_confirm")
+async def admin_refund_txn_confirm_cb(callback: CallbackQuery, state: FSMContext):
+    """Возврат по транзакции (платёж найден в БД)"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    data = await state.get_data()
+    charge_id = data.get("refund_charge_id")
+    await state.clear()
+    if not charge_id:
+        await callback.answer("❌ Данные утеряны, начните заново", show_alert=True)
+        return
+    payment = db.get_payment_by_charge_id(charge_id)
+    if not payment:
+        await callback.answer("❌ Платёж не найден", show_alert=True)
+        return
+    tid = payment[6]
+    stars = payment[3]
+    uname = f"@{payment[7]}" if payment[7] else f"ID:{tid}"
+
+    await callback.message.edit_text("🔄 Выполняется возврат...", parse_mode=ParseMode.HTML)
+    success = await refund_star_payment(telegram_id=tid, payment_id=charge_id, stars_amount=stars)
+
+    if success:
+        if payment[2]:
+            db.deactivate_license(payment[2])
+            user = db.get_user(tid)
+            if user and user[3] == payment[2]:
+                db.clear_user_subscription(tid)
+        try:
+            await notify_user(tid, f"✅ Вам выполнен возврат {stars} ⭐ администратором.")
+        except Exception:
+            pass
+        result_text = f"✅ <b>Возврат выполнен!</b>\n\n👤 {uname}\n⭐ {stars}\n🧾 <code>{charge_id}</code>"
+    else:
+        result_text = (
+            f"❌ <b>Возврат не удался</b>\n\n👤 {uname}\n🧾 <code>{charge_id}</code>\n\n"
+            f"Возможные причины: прошло >48ч, уже возвращён, неверный ID."
+        )
+
+    keyboard = [[InlineKeyboardButton(text="⬅️ В админ-меню", callback_data="admin_back")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(result_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+@dp.callback_query(F.data == "armr_confirm")
+async def admin_refund_manual_confirm_cb(callback: CallbackQuery, state: FSMContext):
+    """Ручной возврат (платёж НЕ в БД)"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    data = await state.get_data()
+    charge_id = data.get("refund_charge_id")
+    tid = data.get("refund_tid")
+    await state.clear()
+    if not charge_id or not tid:
+        await callback.answer("❌ Данные утеряны, начните заново", show_alert=True)
+        return
+
+    await callback.message.edit_text("🔄 Выполняется возврат...", parse_mode=ParseMode.HTML)
+    success = await refund_star_payment(telegram_id=tid, payment_id=charge_id)
+
+    if success:
+        try:
+            await notify_user(tid, "✅ Вам выполнен возврат звёзд администратором.")
+        except Exception:
+            pass
+        result_text = f"✅ <b>Возврат выполнен!</b>\n\n👤 ID: {tid}\n🧾 <code>{charge_id}</code>"
+    else:
+        result_text = (
+            f"❌ <b>Возврат не удался</b>\n\n👤 ID: {tid}\n🧾 <code>{charge_id}</code>\n\n"
+            f"Возможные причины: прошло >48ч, уже возвращён, неверный ID."
+        )
+
+    keyboard = [[InlineKeyboardButton(text="⬅️ В админ-меню", callback_data="admin_back")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(result_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+# --- Выдать подписку бесплатно ---
+@dp.callback_query(F.data.startswith("admin_grant_"))
+async def admin_grant_cb(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    tid = int(callback.data.replace("admin_grant_", ""))
+    user = db.get_user(tid)
+    if not user:
+        await callback.answer("❌ Пользователь не найден", show_alert=True)
+        return
+    uname = f"@{user[2]}" if user[2] else f"ID:{tid}"
+    keyboard = []
+    for plan_id, plan_info in SUBSCRIPTION_PLANS.items():
+        dur = f"{plan_info['duration_days']}д"
+        # ag_ — короткий префикс чтобы уложиться в лимит callback_data
+        keyboard.append([InlineKeyboardButton(
+            text=f"{plan_info['name']} ({dur})",
+            callback_data=f"ag_{tid}_{plan_id}"
+        )])
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_user_{tid}")])
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(
+        f"🎁 <b>Выдать подписку</b> для {uname}\n\nВыберите тариф:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+@dp.callback_query(F.data.startswith("ag_"))
+async def admin_grant_plan_cb(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    # ag_{tid}_{plan_id}
+    parts = callback.data.split("_", 2)
+    tid = int(parts[1])
+    plan_id = parts[2]
+    plan = SUBSCRIPTION_PLANS.get(plan_id)
+    if not plan:
+        await callback.answer("❌ Тариф не найден", show_alert=True)
+        return
+    user = db.get_user(tid)
+    if not user:
+        await callback.answer("❌ Пользователь не найден", show_alert=True)
+        return
+    uname = f"@{user[2]}" if user[2] else f"ID:{tid}"
+    active = db.get_active_license(tid)
+    warn = "\n⚠️ У пользователя есть активная подписка — она будет заменена." if active else ""
+    keyboard = [
+        [InlineKeyboardButton(text="✅ Да, выдать", callback_data=f"agc_{tid}_{plan_id}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_user_{tid}")],
+    ]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(
+        f"🎁 Выдать <b>{plan['name']}</b> ({plan['duration_days']} дн.) "
+        f"пользователю {uname} бесплатно?{warn}",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+@dp.callback_query(F.data.startswith("agc_"))
+async def admin_grant_confirm_cb(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    # agc_{tid}_{plan_id}
+    parts = callback.data.split("_", 2)
+    tid = int(parts[1])
+    plan_id = parts[2]
+    plan = SUBSCRIPTION_PLANS.get(plan_id)
+    if not plan:
+        await callback.answer("❌ Тариф не найден", show_alert=True)
+        return
+    user = db.get_user(tid)
+    if not user:
+        await callback.answer("❌ Пользователь не найден", show_alert=True)
+        return
+    uname = f"@{user[2]}" if user[2] else f"ID:{tid}"
+
+    # Деактивируем старую подписку, если есть
+    active = db.get_active_license(tid)
+    if active and user[3]:
+        db.deactivate_license(user[3])
+        db.clear_user_subscription(tid)
+
+    # Создаём новую подписку
+    license_key = db.create_license_key(user[0], plan_id, plan["duration_days"])
+    end_date = (datetime.now() + timedelta(days=plan["duration_days"])).isoformat()
+    db.update_user_subscription(tid, plan_id, license_key, end_date)
+
+    # Уведомляем пользователя
+    try:
+        await notify_user(
+            tid,
+            f"🎉 <b>Вам выдана подписка!</b>\n\n"
+            f"📦 Тариф: {plan['name']}\n"
+            f"📅 Срок: {plan['duration_days']} дн.\n"
+            f"📅 До: {datetime.fromisoformat(end_date).strftime('%d.%m.%Y')}\n\n"
+            f"Лицензионный ключ сгенерирован.",
+        )
+    except Exception as e:
+        logger.error(f"Не удалось уведомить {tid} о выдаче подписки: {e}")
+
+    keyboard = [[InlineKeyboardButton(text="👤 К карточке", callback_data=f"admin_user_{tid}"),
+                  InlineKeyboardButton(text="⬅️ В админ-меню", callback_data="admin_back")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(
+        f"✅ Подписка <b>{plan['name']}</b> ({plan['duration_days']} дн.) "
+        f"выдана {uname}.\n🔑 <code>{license_key}</code>",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+# --- Отмена с возвратом (подтверждение) ---
+@dp.callback_query(F.data.startswith("admin_cancel_refund_"))
+async def admin_cancel_refund_cb(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    tid = int(callback.data.replace("admin_cancel_refund_", ""))
+    user = db.get_user(tid)
+    if not user or not user[3]:
+        await callback.answer("❌ Нет активной подписки", show_alert=True)
+        return
+    plan_info = SUBSCRIPTION_PLANS.get(user[4], {})
+    stars = plan_info.get("stars", 0)
+    uname = f"@{user[2]}" if user[2] else f"ID:{tid}"
+    keyboard = [
+        [InlineKeyboardButton(text="✅ Да, отменить с возвратом", callback_data=f"admin_confirm_refund_{tid}")],
+        [InlineKeyboardButton(text="❌ Нет", callback_data=f"admin_user_{tid}")],
+    ]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(
+        f"⚠️ Отменить подписку {uname} с возвратом <b>{stars} ⭐</b>?",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+# --- Отмена с возвратом (выполнение) ---
+@dp.callback_query(F.data.startswith("admin_confirm_refund_"))
+async def admin_confirm_refund_cb(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    tid = int(callback.data.replace("admin_confirm_refund_", ""))
+    user = db.get_user(tid)
+    if not user or not user[3]:
+        await callback.answer("❌ Нет активной подписки", show_alert=True)
+        return
+    license_key = user[3]
+    plan_info = SUBSCRIPTION_PLANS.get(user[4], {})
+    stars = plan_info.get("stars", 0)
+    uname = f"@{user[2]}" if user[2] else f"ID:{tid}"
+
+    payment_info = db.get_payment_by_license(license_key)
+    db.deactivate_license(license_key)
+    db.clear_user_subscription(tid)
+
+    refund_ok = False
+    if payment_info:
+        refund_ok = await refund_star_payment(
+            telegram_id=tid,
+            payment_id=payment_info[4],
+            stars_amount=stars,
+        )
+
+    # Уведомляем пользователя
+    try:
+        if refund_ok:
+            await notify_user(tid, f"ℹ️ Ваша подписка отменена администратором. Возврат {stars} ⭐ выполнен.")
+        else:
+            await notify_user(tid, "ℹ️ Ваша подписка отменена администратором. Возврат не удался — обратитесь в поддержку.")
+    except Exception as e:
+        logger.error(f"Не удалось уведомить пользователя {tid}: {e}")
+
+    # Активируем очередь, если есть
+    queued = db.get_queued_subscription(tid)
+    queue_text = ""
+    if queued:
+        q_plan_id = queued[3]
+        q_plan = SUBSCRIPTION_PLANS.get(q_plan_id)
+        if q_plan:
+            new_key = db.create_license_key(user[0], q_plan_id, q_plan["duration_days"])
+            new_end = (datetime.now() + timedelta(days=q_plan["duration_days"])).isoformat()
+            db.update_user_subscription(tid, q_plan_id, new_key, new_end)
+            db.save_payment(user_id=user[0], license_key=new_key, stars_amount=queued[4], telegram_payment_charge_id=queued[5])
+            db.delete_queued_subscription(tid)
+            queue_text = f"\n🎉 Подписка из очереди ({q_plan['name']}) активирована."
+
+    refund_status = "✅ Возврат выполнен" if refund_ok else "⚠️ Возврат не удался"
+    keyboard = [[InlineKeyboardButton(text="⬅️ В админ-меню", callback_data="admin_back")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(
+        f"✅ Подписка {uname} отменена.\n{refund_status}{queue_text}",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+# --- Отмена без возврата (подтверждение) ---
+@dp.callback_query(F.data.startswith("admin_cancel_norefund_"))
+async def admin_cancel_norefund_cb(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    tid = int(callback.data.replace("admin_cancel_norefund_", ""))
+    user = db.get_user(tid)
+    if not user or not user[3]:
+        await callback.answer("❌ Нет активной подписки", show_alert=True)
+        return
+    uname = f"@{user[2]}" if user[2] else f"ID:{tid}"
+    keyboard = [
+        [InlineKeyboardButton(text="✅ Да, отменить БЕЗ возврата", callback_data=f"admin_confirm_norefund_{tid}")],
+        [InlineKeyboardButton(text="❌ Нет", callback_data=f"admin_user_{tid}")],
+    ]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(
+        f"⚠️ Отменить подписку {uname} <b>БЕЗ возврата</b>?",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+# --- Отмена без возврата (выполнение) ---
+@dp.callback_query(F.data.startswith("admin_confirm_norefund_"))
+async def admin_confirm_norefund_cb(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    tid = int(callback.data.replace("admin_confirm_norefund_", ""))
+    user = db.get_user(tid)
+    if not user or not user[3]:
+        await callback.answer("❌ Нет активной подписки", show_alert=True)
+        return
+    license_key = user[3]
+    uname = f"@{user[2]}" if user[2] else f"ID:{tid}"
+
+    db.deactivate_license(license_key)
+    db.clear_user_subscription(tid)
+
+    try:
+        await notify_user(tid, "ℹ️ Ваша подписка отменена администратором.")
+    except Exception as e:
+        logger.error(f"Не удалось уведомить пользователя {tid}: {e}")
+
+    # Активируем очередь
+    queued = db.get_queued_subscription(tid)
+    queue_text = ""
+    if queued:
+        q_plan_id = queued[3]
+        q_plan = SUBSCRIPTION_PLANS.get(q_plan_id)
+        if q_plan:
+            new_key = db.create_license_key(user[0], q_plan_id, q_plan["duration_days"])
+            new_end = (datetime.now() + timedelta(days=q_plan["duration_days"])).isoformat()
+            db.update_user_subscription(tid, q_plan_id, new_key, new_end)
+            db.save_payment(user_id=user[0], license_key=new_key, stars_amount=queued[4], telegram_payment_charge_id=queued[5])
+            db.delete_queued_subscription(tid)
+            queue_text = f"\n🎉 Подписка из очереди ({q_plan['name']}) активирована."
+
+    keyboard = [[InlineKeyboardButton(text="⬅️ В админ-меню", callback_data="admin_back")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(
+        f"✅ Подписка {uname} отменена (без возврата).{queue_text}",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+# --- Написать сообщение пользователю ---
+@dp.callback_query(F.data.startswith("admin_msg_"))
+async def admin_msg_cb(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    tid = int(callback.data.replace("admin_msg_", ""))
+    await state.set_state(AdminStates.waiting_message_text)
+    await state.update_data(target_telegram_id=tid)
+    keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_user_{tid}")]]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await callback.message.edit_text(
+        f"✉️ Введите текст сообщения для пользователя (ID: {tid}):",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+@dp.message(AdminStates.waiting_message_text)
+async def admin_msg_handler(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    data = await state.get_data()
+    tid = data.get("target_telegram_id")
+    await state.clear()
+    if not tid:
+        await message.answer("❌ Ошибка: не найден ID пользователя.")
+        return
+    text = message.text.strip()
+    user = db.get_user(tid)
+    uname = f"@{user[2]}" if user and user[2] else f"ID:{tid}"
+    try:
+        await notify_user(tid, f"📩 Сообщение от администратора:\n\n{text}")
+        keyboard = [[InlineKeyboardButton(text="⬅️ В админ-меню", callback_data="admin_back")]]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await message.answer(f"✅ Сообщение отправлено {uname}", reply_markup=reply_markup)
+    except Exception as e:
+        logger.error(f"Не удалось отправить сообщение {tid}: {e}")
+        await message.answer(f"❌ Не удалось отправить сообщение: {e}")
+
+# ==================== КОНЕЦ АДМИН-ПАНЕЛИ ====================
+
 async def main():
     logger.info("Бот запускается...")
+
+    from web_auth import create_web_app, start_web_server, cleanup_expired_sessions
+    web_app = create_web_app(db, bot, SERVER_API_ID, SERVER_API_HASH)
+    web_app["web_base_url"] = WEB_AUTH_HOST
+    runner = await start_web_server(web_app, WEB_AUTH_PORT)
+
+    # Проверка Docker-образа при старте
+    import docker_manager
+    asyncio.create_task(docker_manager.build_image_if_needed())
+
     asyncio.create_task(send_reminder_notifications())
     asyncio.create_task(process_queued_subscriptions())
-    await dp.start_polling(bot)
+    asyncio.create_task(cleanup_expired_sessions())
+    asyncio.create_task(docker_manager.monitor_containers(db, bot))
+
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await runner.cleanup()
 
 if __name__ == "__main__":
     asyncio.run(main())
