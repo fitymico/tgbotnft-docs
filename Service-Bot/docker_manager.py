@@ -29,7 +29,11 @@ def _container_name(telegram_id: int) -> str:
 async def build_image_if_needed() -> bool:
     """Проверить наличие образа, при необходимости собрать."""
     def _build():
-        client = _get_client()
+        try:
+            client = _get_client()
+        except Exception as e:
+            logger.warning(f"Docker недоступен, пропускаю проверку образа: {e}")
+            return False
         try:
             client.images.get(IMAGE_NAME)
             logger.info(f"Docker-образ '{IMAGE_NAME}' уже существует")
@@ -48,6 +52,9 @@ async def build_image_if_needed() -> bool:
             except Exception as e:
                 logger.error(f"Ошибка сборки образа: {e}")
                 return False
+        except Exception as e:
+            logger.warning(f"Ошибка проверки Docker-образа: {e}")
+            return False
         finally:
             client.close()
 
