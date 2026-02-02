@@ -1,31 +1,34 @@
-# Telegram Bot NFT - Documentation
+# Telegram Bot NFT — Документация
 
-Repository for [Telegram Bot NFT](https://github.com/pluttan/Telegram-Bot-NFT) documentation.
+Документация для [Telegram Bot NFT](https://github.com/seventyzero/tgbotnft) на базе [Docusaurus](https://docusaurus.io/).
 
-Website: https://pluttan.github.io/Telegram-Bot-NFT-docs/
+Сайт: https://pluttan.github.io/Telegram-Bot-NFT-docs/
 
-## Installation
+> Эта папка является частью монорепозитория [seventyzero/tgbotnft](https://github.com/seventyzero/tgbotnft) и одновременно синхронизируется с отдельным репозиторием [seventyzero/tgbotnft-docs](https://github.com/seventyzero/tgbotnft-docs) через `git subtree`.
+
+## Локальная разработка
 
 ```bash
 npm install
+npm start        # http://localhost:3000
 ```
 
-## Local Development
+## Сборка
 
 ```bash
-npm start
+npm run build    # Статика в директории build/
 ```
 
-This command starts a local development server and opens up a browser window. Most changes are reflected live without having to restart the server.
+## Деплой
 
-## Build
+Автоматический деплой на GitHub Pages через GitHub Actions при пуше в `main` репозитория [seventyzero/tgbotnft-docs](https://github.com/seventyzero/tgbotnft-docs).
+
+## Синхронизация с монорепо
 
 ```bash
-npm run build
+# Пуш docs в отдельный репозиторий
+git subtree push --prefix=docs docs-origin main
+
+# Подтянуть изменения из отдельного репозитория
+git subtree pull --prefix=docs docs-origin main --squash
 ```
-
-This command generates static content into the `build` directory.
-
-## Deployment
-
-This repository is configured to automatically deploy to GitHub Pages via GitHub Actions when pushing to `main`.
