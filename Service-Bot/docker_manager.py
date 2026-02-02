@@ -61,13 +61,15 @@ async def build_image_if_needed() -> bool:
     return await asyncio.get_event_loop().run_in_executor(None, _build)
 
 
+UDP_PORT_BASE = int(os.getenv("UDP_PORT_BASE", "9200"))
+
+
 async def start_container(
     telegram_id: int,
     bot_token: str,
-    api_id: str,
-    api_hash: str,
-    session_string: str,
     license_key: str,
+    session_string: str = "",
+    udp_port: int = 0,
 ) -> str | None:
     """Создать и запустить контейнер для пользователя. Возвращает container_id или None."""
     def _start():
@@ -87,13 +89,16 @@ async def start_container(
         user_data_dir = os.path.join(DATA_BASE_DIR, str(telegram_id))
         os.makedirs(user_data_dir, exist_ok=True)
 
+        container_udp_port = udp_port or (UDP_PORT_BASE + (telegram_id % 1000))
+
         env = {
             "BOT_TOKEN": bot_token,
             "ADMIN_ID": str(telegram_id),
-            "API_ID": api_id,
-            "API_HASH": api_hash,
-            "SESSION_STRING": session_string,
             "LICENSE_KEY": license_key,
+            "API_ID": os.getenv("SERVER_API_ID", ""),
+            "API_HASH": os.getenv("SERVER_API_HASH", ""),
+            "SESSION_STRING": session_string,
+            "UDP_LISTEN_PORT": str(container_udp_port),
             "TZ": "Europe/Moscow",
         }
 
@@ -107,8 +112,9 @@ async def start_container(
                 volumes={
                     os.path.abspath(user_data_dir): {"bind": "/app/data", "mode": "rw"}
                 },
+                ports={f"{container_udp_port}/udp": container_udp_port},
             )
-            logger.info(f"Контейнер {name} запущен: {container.id}")
+            logger.info(f"Контейнер {name} запущен: {container.id}, UDP порт: {container_udp_port}")
             _restart_counts.pop(telegram_id, None)
             return container.id
         except Exception as e:

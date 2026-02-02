@@ -1,51 +1,51 @@
-"""
-Конфигурация проекта Telegram-Bot-NFT
-Все секретные данные загружаются из переменных окружения или .env файла
-"""
 import os
+import sys
 from pathlib import Path
 
-# Корневая директория проекта
-PROJECT_ROOT = Path(__file__).parent.resolve()
+from dotenv import load_dotenv
+
+if getattr(sys, "frozen", False):
+    # Running as PyInstaller binary — use directory containing the executable
+    PROJECT_ROOT = Path(sys.executable).parent.resolve()
+else:
+    PROJECT_ROOT = Path(__file__).parent.resolve()
+
+load_dotenv(PROJECT_ROOT / ".env")
 
 # ================== Telegram Bot ==================
-# Токен бота (из переменных окружения)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-
-# ID администратора бота
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-# ================== Telegram API (MTProto) ==================
-# API ID и Hash для MTProto клиента
-API_ID = os.getenv("API_ID", "")
+# ================== License ==================
+LICENSE_KEY = os.getenv("LICENSE_KEY", "")
+
+# ================== Telethon (user session) ==================
+API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
+SESSION_STRING = os.getenv("SESSION_STRING", "")
 
-# ================== Пути к файлам ==================
-DATA_DIR = PROJECT_ROOT / "data"
-STATUS_FILE = DATA_DIR / "status.json"
-LOG_FILE = DATA_DIR / "bot.log"
-SESSION_FILE = DATA_DIR / "session.session"
-GIFT_ID_FILE = DATA_DIR / "giftID.json"
+# ================== UDP listener ==================
+UDP_LISTEN_HOST = os.getenv("UDP_LISTEN_HOST", "0.0.0.0")
+UDP_LISTEN_PORT = int(os.getenv("UDP_LISTEN_PORT", "9200"))
 
-# Проверка наличия обязательных переменных
+# ================== Data paths ==================
+STATUS_FILE = str(PROJECT_ROOT / "data" / "status.json")
+LOG_FILE = str(PROJECT_ROOT / "data" / "bot.log")
+
+
 def validate_config():
-    """Проверяет наличие обязательных переменных конфигурации"""
     errors = []
-    
     if not BOT_TOKEN:
-        errors.append("BOT_TOKEN не задан")
-    
+        errors.append("BOT_TOKEN not set")
     if ADMIN_ID == 0:
-        errors.append("ADMIN_ID не задан")
-    
+        errors.append("ADMIN_ID not set")
+    if not LICENSE_KEY:
+        errors.append("LICENSE_KEY not set")
     if not API_ID:
-        errors.append("API_ID не задан")
-    
+        errors.append("API_ID not set")
     if not API_HASH:
-        errors.append("API_HASH не задан")
-    
+        errors.append("API_HASH not set")
+    if not SESSION_STRING:
+        errors.append("SESSION_STRING not set")
     if errors:
-        raise ValueError("Ошибки конфигурации:\n" + "\n".join(f"  - {e}" for e in errors))
-
-# Создание директории data если её нет
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+        raise ValueError("Config errors:\n" + "\n".join(f"  - {e}" for e in errors))

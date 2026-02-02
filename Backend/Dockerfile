@@ -5,9 +5,8 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY Message_Bot ./Message_Bot
-COPY config.py ./
+COPY . .
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "Message_Bot/talkbot.py"]
+CMD ["python", "main.py"]

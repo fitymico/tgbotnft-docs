@@ -1,155 +1,109 @@
 # -*- coding: utf-8 -*-
-import asyncio, json, os, tempfile, fcntl, re
-import subprocess
+import asyncio
+import json
+import os
 import sys
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram import F
 from dotenv import load_dotenv
 
-# Загружаем .env из корня проекта
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+if getattr(sys, "frozen", False):
+    PROJECT_ROOT = Path(sys.executable).parent.resolve()
+else:
+    PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
 load_dotenv(PROJECT_ROOT / ".env")
 
-# Добавляем корень проекта в путь для импорта config
-sys.path.insert(0, str(PROJECT_ROOT))
-from config import BOT_TOKEN, ADMIN_ID, STATUS_FILE, LOG_FILE
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-# ================== Инициализация бота ==================
+from config import (
+    BOT_TOKEN, ADMIN_ID, LICENSE_KEY,
+    API_ID, API_HASH, SESSION_STRING,
+    UDP_LISTEN_HOST, UDP_LISTEN_PORT,
+    STATUS_FILE, LOG_FILE,
+)
+from Message_Bot.distribution import validate_distribution
+from Message_Bot.gift_buyer import GiftBuyer
+from Message_Bot.udp_listener import UdpListener
+
+import logging
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
+
+# ================== Initialization ==================
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 user_states = {}
 
-# ================== Функция работы с json ==================
-def ensure_dir_for_file(path):
-    d = os.path.dirname(path)
-    os.makedirs(d, exist_ok=True)
+buyer = GiftBuyer(
+    api_id=API_ID,
+    api_hash=API_HASH,
+    session_string=SESSION_STRING,
+    status_file=STATUS_FILE,
+    log_file=LOG_FILE,
+)
 
-def read_status():
-    """Вернуть словарь состояния. Если файла нет — вернуть дефолт."""
-    ensure_dir_for_file(STATUS_FILE)
-    default = {
-        "is_running": False,
-        "status_text": "stopped",
-        "distribution": "",
-        "iterations_total": 0,
-        "iteration_current": 0,
-        "delay": 1.0
-    }
+udp = UdpListener(
+    license_key=LICENSE_KEY,
+    host=UDP_LISTEN_HOST,
+    port=UDP_LISTEN_PORT,
+)
+udp.on_gifts(buyer.handle_new_gifts)
+
+
+# ================== Status helpers ==================
+def read_status() -> dict:
+    return buyer.read_status()
+
+
+def write_status(data: dict):
+    buyer.write_status(data)
+
+
+def ensure_status():
     if not os.path.exists(STATUS_FILE):
-        return default
-    try:
-        with open(STATUS_FILE, "r", encoding="utf-8") as f:
-            try:
-                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-                return json.load(f)
-            finally:
-                try:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                except:
-                    pass
-    except Exception:
-        return default
+        os.makedirs(os.path.dirname(STATUS_FILE), exist_ok=True)
+        write_status({
+            "isActive": False,
+            "distribution": "",
+            "iterations": 0,
+            "delay": 1.0,
+        })
 
-def write_status_atomic(data: dict):
-    """Безопасная атомарная запись JSON: write->fsync->replace."""
-    ensure_dir_for_file(STATUS_FILE)
-    dirpath = os.path.dirname(STATUS_FILE)
-    fd, tmp_path = tempfile.mkstemp(prefix="status.", dir=dirpath)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as tmpf:
-            fcntl.flock(tmpf.fileno(), fcntl.LOCK_EX)
-            json.dump(data, tmpf, ensure_ascii=False, indent=2)
-            tmpf.flush()
-            os.fsync(tmpf.fileno())
-            fcntl.flock(tmpf.fileno(), fcntl.LOCK_UN)
-        os.replace(tmp_path, STATUS_FILE)
-    finally:
-        if os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except:
-                pass
 
-def validate_distribution(text: str) -> tuple[bool, str]:
-    """
-    Проверяет правильность формата распределения звезд.
-    Формат: <условие> <количество>
-    Пример: <1000 10
-            >=1000 и <5000 5
-            >5000 1
-    """
-    lines = text.strip().split('\n')
-    if not lines:
-        return False, "Пустой ввод"
-    
-    for i, line in enumerate(lines, 1):
-        line = line.strip()
-        if not line:
-            continue
-        
-        # Разделяем строку на части
-        parts = line.split()
-        if len(parts) < 2:
-            return False, f"Ошибка в строке {i}: недостаточно значений"
-        
-        # Проверяем количество (последний элемент)
-        try:
-            quantity = int(parts[-1])
-            if quantity <= 0:
-                return False, f"Ошибка в строке {i}: количество должно быть положительным числом"
-        except ValueError:
-            return False, f"Ошибка в строке {i}: количество должно быть целым числом"
-        
-        # Извлекаем условие (все части кроме последней - количества)
-        condition_parts = parts[:-1]
-        
-        # Собираем условие обратно в строку
-        condition = ' '.join(condition_parts)
-        
-        # Проверяем сложные условия с "и"
-        if " и " in condition:
-            sub_conditions = condition.split(" и ")
-            for sub_cond in sub_conditions:
-                sub_cond = sub_cond.strip()
-                if not re.match(r'^[<>=]=?\d+(\.\d+)?$', sub_cond):
-                    return False, f"Ошибка в строке {i}: неверный формат условия '{sub_cond}'"
-        else:
-            # Простое условие
-            if not re.match(r'^[<>=]=?\d+(\.\d+)?$', condition):
-                return False, f"Ошибка в строке {i}: неверный формат условия '{condition}'"
-    
-    return True, ""
-
-# ================== Функция создания клавиатуры ==================
+# ================== Keyboards ==================
 def make_kb_grid_minor():
-    kb = types.ReplyKeyboardMarkup(
+    return types.ReplyKeyboardMarkup(
         keyboard=[
             [types.KeyboardButton(text="⭐ Распределение звезд ⭐")],
             [types.KeyboardButton(text="📋 Лог-файл покупок за все время 📋")],
             [types.KeyboardButton(text="⬅️ Назад ⬅️")],
         ],
         resize_keyboard=True,
-        one_time_keyboard=False
+        one_time_keyboard=False,
     )
-    return kb
+
 
 def make_kb_grid_main():
-    kb = types.ReplyKeyboardMarkup(
+    return types.ReplyKeyboardMarkup(
         keyboard=[
             [types.KeyboardButton(text="🔧 Настройки 🔧"), types.KeyboardButton(text="💰 Начать 💰")],
             [types.KeyboardButton(text="📊 Статус 📊"), types.KeyboardButton(text="🛑 Остановить 🛑")],
         ],
         resize_keyboard=True,
-        one_time_keyboard=False
+        one_time_keyboard=False,
     )
-    return kb
 
-# ================== Обработчики ==================
+
+# ================== Handlers ==================
 async def handle_text_after_buttons(message: types.Message):
-    """Обработка текста после нажатия кнопок настроек"""
     user_id = message.from_user.id
     if user_id != ADMIN_ID:
         return
@@ -158,109 +112,116 @@ async def handle_text_after_buttons(message: types.Message):
     if not text:
         await message.answer("Пустой ввод. Попробуйте снова.")
         return
-    
-    # Проверяем, не нажата ли кнопка "Назад" в тексте
+
     if text == "⬅️ Назад ⬅️":
-        # Удаляем состояние пользователя
         user_states.pop(user_id, None)
-        # Показываем главное меню
         await message.answer("Возврат в главное меню 👇", reply_markup=make_kb_grid_main())
         return
-    
+
     state = user_states.get(user_id)
     if not state:
         return
 
-    s = read_status()
-
     if state == "awaiting_distribution":
-        # Проверяем валидность распределения
         is_valid, error_msg = validate_distribution(text)
         if not is_valid:
             await message.answer(f"❌ {error_msg}\n\nПопробуйте снова:")
             return
-            
-        s["distribution"] = text
-        write_status_atomic(s)
+
+        status = read_status()
+        status["distribution"] = text
+        write_status(status)
         user_states.pop(user_id, None)
         await message.answer("✅ Распределение звёзд сохранено!", reply_markup=make_kb_grid_minor())
-        
+
     elif state == "awaiting_iterations":
         try:
-            s["iterations_total"] = int(text)
-            write_status_atomic(s)
-            user_states.pop(user_id, None)
-            await message.answer(f"✅ Количество итераций сохранено: {text}", reply_markup=make_kb_grid_minor())
+            val = int(text)
         except ValueError:
             await message.answer("❌ Введите число, например: 10")
             return
-            
+        status = read_status()
+        status["iterations"] = val
+        write_status(status)
+        user_states.pop(user_id, None)
+        await message.answer(f"✅ Количество итераций сохранено: {text}", reply_markup=make_kb_grid_minor())
+
     elif state == "awaiting_delay":
         try:
-            s["delay"] = float(text)
-            write_status_atomic(s)
-            user_states.pop(user_id, None)
-            await message.answer(f"✅ Задержка сохранена: {text} сек", reply_markup=make_kb_grid_minor())
+            val = float(text)
         except ValueError:
             await message.answer("❌ Введите число, например: 1.5")
             return
+        status = read_status()
+        status["delay"] = val
+        write_status(status)
+        user_states.pop(user_id, None)
+        await message.answer(f"✅ Задержка сохранена: {text} сек", reply_markup=make_kb_grid_minor())
+
 
 async def handle_back_button(message: types.Message):
-    """Обработка кнопки Назад"""
     user_id = message.from_user.id
     if user_id != ADMIN_ID:
         return
-    
+
     text = message.text.strip()
     if text == "⬅️ Назад ⬅️":
-        # Очищаем состояние пользователя
         user_states.pop(user_id, None)
-        # Показываем главное меню
         await message.answer("Возврат в главное меню 👇", reply_markup=make_kb_grid_main())
         return True
     return False
 
+
 async def handle_settings_buttons(message: types.Message):
-    """Обработка кнопок настроек"""
     user_id = message.from_user.id
     if user_id != ADMIN_ID:
         return False
-    
+
     text = message.text.strip()
-    
+
     if text == "🔧 Настройки 🔧":
-        kb = make_kb_grid_minor()
-        await message.answer("Открываю меню настроек 👇", reply_markup=kb)
+        await message.answer("Открываю меню настроек 👇", reply_markup=make_kb_grid_minor())
         return True
-        
+
     elif text == "📊 Статус 📊":
-        s = read_status()
+        status = read_status()
+        is_active = status.get("isActive", False)
+        distribution = status.get("distribution", "")
+
+        balance = 0
+        if buyer._client and buyer._client.is_connected():
+            try:
+                from Message_Bot.telegram_api import get_stars_balance
+                balance = await get_stars_balance(buyer._client)
+            except Exception:
+                pass
+
         reply = (
             f"📈 Статус бота:\n"
-            f"• Активен: {'✅' if s.get('is_running') else '❌'}\n"
-            f"• Текущее распределение звезд:\n{s.get('distribution') or '— не задано —'}"
+            f"• Активен: {'✅' if is_active else '❌'}\n"
+            f"• Баланс: {balance} ⭐\n"
+            f"• Текущее распределение звезд:\n{distribution or '— не задано —'}"
         )
         await message.answer(reply)
         return True
-        
+
     elif text == "💰 Начать 💰":
-        s = read_status()
-        s["is_running"] = True
-        s["status_text"] = "running"
-        write_status_atomic(s)
-        subprocess.Popen(["bash", str(PROJECT_ROOT / "scripts" / "startbot.sh")])
-        await message.answer("💰 Сканирование подарков началось!")
+        status = read_status()
+        if not status.get("distribution"):
+            await message.answer("❌ Сначала задайте распределение звёзд!")
+            return True
+        status["isActive"] = True
+        write_status(status)
+        await message.answer("💰 Сканирование подарков активировано! Ожидаем данные от сервера...")
         return True
-        
+
     elif text == "🛑 Остановить 🛑":
-        s = read_status()
-        s["is_running"] = False
-        s["status_text"] = "stopped"
-        write_status_atomic(s)
-        subprocess.Popen(["bash", str(PROJECT_ROOT / "scripts" / "stopbot.sh")])
+        status = read_status()
+        status["isActive"] = False
+        write_status(status)
         await message.answer("🛑 Сканирование подарков остановлено!")
         return True
-        
+
     elif text == "⭐ Распределение звезд ⭐":
         await message.answer(
             "Введите распределение (по строкам: условие_цены количество), например:\n"
@@ -276,67 +237,79 @@ async def handle_settings_buttons(message: types.Message):
         )
         user_states[message.from_user.id] = "awaiting_distribution"
         return True
-        
+
     elif text == "📋 Лог-файл покупок за все время 📋":
         if os.path.exists(LOG_FILE):
-            try:
-                with open(LOG_FILE, 'rb') as log_file:
-                    await message.answer_document(
-                        types.BufferedInputFile(
-                            log_file.read(),
-                            filename="bot_log.txt"
-                        ),
-                        caption="📋 Лог-файл покупок"
-                    )
-            except Exception as e:
-                await message.answer(f"❌ Ошибка при чтении лог-файла: {str(e)}")
+            with open(LOG_FILE, "rb") as f:
+                content = f.read()
+            if content.strip():
+                await message.answer_document(
+                    types.BufferedInputFile(content, filename="bot_log.txt"),
+                    caption="📋 Лог-файл покупок"
+                )
+            else:
+                await message.answer("📭 Лог-файл пока пуст.")
         else:
-            await message.answer("📭 Лог-файл пока пуст или не создан.")
+            await message.answer("📭 Лог-файл пока не создан.")
         return True
-    
+
     return False
 
+
 async def controlUser(message: types.Message):
-    """Обработка команды /start"""
     if message.from_user.id != ADMIN_ID:
         return
-    
-    kb = make_kb_grid_main()
+
+    ensure_status()
     await message.answer(
         "🎛️ Перед тобой панель управления ботом\nВыбери нужный раздел: 👇",
-        reply_markup=kb
+        reply_markup=make_kb_grid_main(),
     )
 
-# ================== Предикаты ==================
+
+# ================== Predicates ==================
 def awaiting_input_predicate(message: types.Message) -> bool:
-    """Проверяет, ожидает ли бот ввода от пользователя"""
     uid = message.from_user.id if message.from_user else None
     if not uid or uid not in user_states:
         return False
     return user_states[uid] in ("awaiting_distribution", "awaiting_iterations", "awaiting_delay")
 
+
 def is_back_button_predicate(message: types.Message) -> bool:
-    """Проверяет, нажата ли кнопка Назад"""
     return message.text and message.text.strip() == "⬅️ Назад ⬅️"
 
+
 def is_settings_button_predicate(message: types.Message) -> bool:
-    """Проверяет, нажата ли одна из кнопок управления"""
     text = message.text.strip() if message.text else ""
     return text in [
         "🔧 Настройки 🔧", "💰 Начать 💰", "📊 Статус 📊", "🛑 Остановить 🛑",
         "⭐ Распределение звезд ⭐", "📋 Лог-файл покупок за все время 📋"
     ]
 
-# ================== Регистрация обработчиков ==================
-# Важен порядок: сначала специфичные обработчики, потом общие
+
+# ================== Register handlers ==================
 dp.message.register(controlUser, Command(commands=["start"]))
 dp.message.register(handle_back_button, is_back_button_predicate)
 dp.message.register(handle_text_after_buttons, awaiting_input_predicate)
 dp.message.register(handle_settings_buttons, is_settings_button_predicate)
 
-# ================== Запуск бота ==================
+
+# ================== Main ==================
 async def main():
-    await dp.start_polling(bot)
+    ensure_status()
+
+    # Connect Telethon client for purchasing
+    await buyer.connect()
+
+    # Start UDP listener for receiving gifts from Backend
+    await udp.start()
+
+    try:
+        await dp.start_polling(bot)
+    finally:
+        udp.stop()
+        await buyer.disconnect()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

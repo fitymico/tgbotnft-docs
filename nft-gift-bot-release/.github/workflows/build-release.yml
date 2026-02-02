@@ -1,0 +1,85 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            arch: amd64
+            python: '3.12'
+          - os: ubuntu-22.04-arm
+            arch: arm64
+            python: '3.12'
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout source (private repo)
+        uses: actions/checkout@v4
+        with:
+          repository: YOUR_ORG/tgbotnft
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          path: source
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: |
+          cd source/Telegram-Bot-NFT
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build binary
+        run: |
+          cd source/Telegram-Bot-NFT
+          pyinstaller nft-gift-bot.spec --noconfirm --clean
+          mv dist/nft-gift-bot dist/nft-gift-bot-linux-${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nft-gift-bot-linux-${{ matrix.arch }}
+          path: source/Telegram-Bot-NFT/dist/nft-gift-bot-linux-${{ matrix.arch }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: NFT Gift Bot ${{ github.event.inputs.version }}
+          body: |
+            ## NFT Gift Bot ${{ github.event.inputs.version }}
+
+            ### Установка
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sudo bash
+            ```
+
+            ### Бинарники
+            - `nft-gift-bot-linux-amd64` — Linux x86_64
+            - `nft-gift-bot-linux-arm64` — Linux ARM64
+          files: |
+            nft-gift-bot-linux-amd64/nft-gift-bot-linux-amd64
+            nft-gift-bot-linux-arm64/nft-gift-bot-linux-arm64
+          draft: false
+          prerelease: false

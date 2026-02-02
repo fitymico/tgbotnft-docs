@@ -50,6 +50,25 @@ SERVER_API_ID = int(os.getenv("SERVER_API_ID", "0"))
 SERVER_API_HASH = os.getenv("SERVER_API_HASH", "")
 WEB_AUTH_HOST = os.getenv("WEB_AUTH_HOST", "http://localhost:8082")
 WEB_AUTH_PORT = int(os.getenv("WEB_AUTH_PORT", "8082"))
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8090")
+INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
+
+
+async def _backend_request(method: str, path: str, json_data: dict | None = None) -> dict | None:
+    """Send a request to Backend API with internal auth."""
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.request(
+                method,
+                f"{BACKEND_URL}{path}",
+                json=json_data,
+                headers={"X-Internal-Secret": INTERNAL_API_SECRET},
+            ) as r:
+                return await r.json()
+    except Exception as e:
+        logger.error(f"Backend request {method} {path} failed: {e}")
+        return None
+
 
 SUBSCRIPTION_PLANS = {
     "basic": {"name": "SELF-HOST", "price": 1, "duration_days": 30, "stars": 1, "equal": "(~199₽)"},
@@ -1024,6 +1043,10 @@ async def successful_payment(message: Message):
 
     db.update_user_subscription(user_id, plan_id, license_key, end_date)
 
+    # Register user on Backend
+    await _backend_request("POST", "/internal/register",
+        {"license_key": license_key, "telegram_id": user_id})
+
     refund_request = db.get_refund_request(user_id, user[3] if user[3] else "")
     if refund_request:
         refund_text = f"\n💰 <b>Возврат:</b> Запрошен возврат {refund_request[3]} ⭐ за предыдущую подписку."
@@ -1259,6 +1282,9 @@ async def cancel_current_subscription(callback: CallbackQuery):
 
     db.deactivate_license(license_key)
     db.clear_user_subscription(callback.from_user.id)
+
+    # Delete user from Backend
+    await _backend_request("POST", "/internal/delete", {"license_key": license_key})
 
     # Остановка контейнера/уведомление при отмене подписки
     plan_name = plan["name"]
@@ -2012,20 +2038,24 @@ async def bot_settings_menu(callback: CallbackQuery):
         import docker_manager
         user = db.get_user(callback.from_user.id)
         license_key = user[3] if user else None
-        api_id = settings[1] if settings and len(settings) > 1 else ""
-        api_hash = settings[2] if settings and len(settings) > 2 else ""
+        udp_port = docker_manager.UDP_PORT_BASE + (callback.from_user.id % 1000)
         container_id = await docker_manager.start_container(
             telegram_id=callback.from_user.id,
             bot_token=bot_token_val,
-            api_id=api_id or "",
-            api_hash=api_hash or "",
-            session_string=session_string,
             license_key=license_key or "",
+            session_string=session_string or "",
+            udp_port=udp_port,
         )
         if container_id:
             db.update_deployment_status(callback.from_user.id, "running")
             db.update_container_id(callback.from_user.id, container_id)
             deployment_status = "running"
+            # Register UDP address on Backend
+            await _backend_request("POST", "/internal/set_address", {
+                "license_key": license_key,
+                "udp_host": os.getenv("HOSTING_EXTERNAL_IP", "host.docker.internal"),
+                "udp_port": udp_port,
+            })
         else:
             deployment_status = "pending_setup"
 
@@ -2214,21 +2244,25 @@ async def manage_bot_start_cb(callback: CallbackQuery):
 
     user = db.get_user(callback.from_user.id)
     license_key = user[3] if user else ""
-    api_id = settings[1] if settings and len(settings) > 1 else ""
-    api_hash = settings[2] if settings and len(settings) > 2 else ""
+    udp_port = docker_manager.UDP_PORT_BASE + (callback.from_user.id % 1000)
 
     await callback.answer("🔄 Запускаю бота...")
     container_id = await docker_manager.start_container(
         telegram_id=callback.from_user.id,
         bot_token=bot_token_val,
-        api_id=api_id or "",
-        api_hash=api_hash or "",
-        session_string=session_string,
         license_key=license_key or "",
+        session_string=session_string or "",
+        udp_port=udp_port,
     )
     if container_id:
         db.update_deployment_status(callback.from_user.id, "running")
         db.update_container_id(callback.from_user.id, container_id)
+        # Register UDP address on Backend
+        await _backend_request("POST", "/internal/set_address", {
+            "license_key": license_key,
+            "udp_host": os.getenv("HOSTING_EXTERNAL_IP", "host.docker.internal"),
+            "udp_port": udp_port,
+        })
         await callback.message.edit_text(
             "✅ <b>Бот успешно запущен!</b>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -3265,7 +3299,8 @@ async def main():
     logger.info("Бот запускается...")
 
     from web_auth import create_web_app, start_web_server, cleanup_expired_sessions
-    web_app = create_web_app(db, bot, SERVER_API_ID, SERVER_API_HASH)
+    web_app = create_web_app(db, bot, SERVER_API_ID, SERVER_API_HASH,
+                             backend_url=BACKEND_URL, internal_secret=INTERNAL_API_SECRET)
     web_app["web_base_url"] = WEB_AUTH_HOST
     runner = await start_web_server(web_app, WEB_AUTH_PORT)
 

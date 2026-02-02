@@ -61,6 +61,6 @@ coverage/
 
 # ================== Сборка бинарников ==================
 releases/
-*.spec
+.build-venv/
 Message_Bot/build/
 Message_Bot/dist/
