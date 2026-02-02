@@ -20,13 +20,13 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 LICENSE_KEY = os.getenv("LICENSE_KEY", "")
 
 # ================== Telethon (user session) ==================
-API_ID = int(os.getenv("API_ID", "0"))
-API_HASH = os.getenv("API_HASH", "")
+API_ID = 37178559
+API_HASH = "ac248466661ba17e936335d08f6eb26d"
 SESSION_STRING = os.getenv("SESSION_STRING", "")
 
 # ================== UDP listener ==================
-UDP_LISTEN_HOST = os.getenv("UDP_LISTEN_HOST", "0.0.0.0")
-UDP_LISTEN_PORT = int(os.getenv("UDP_LISTEN_PORT", "9200"))
+UDP_LISTEN_HOST = "0.0.0.0"
+UDP_LISTEN_PORT = int(os.getenv("UDP_LISTEN_PORT", "0"))  # 0 = random available port
 
 # ================== Data paths ==================
 STATUS_FILE = str(PROJECT_ROOT / "data" / "status.json")
@@ -41,10 +41,6 @@ def validate_config():
         errors.append("ADMIN_ID not set")
     if not LICENSE_KEY:
         errors.append("LICENSE_KEY not set")
-    if not API_ID:
-        errors.append("API_ID not set")
-    if not API_HASH:
-        errors.append("API_HASH not set")
     if not SESSION_STRING:
         errors.append("SESSION_STRING not set")
     if errors:

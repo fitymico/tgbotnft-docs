@@ -138,10 +138,7 @@ download_binary() {
 CFG_BOT_TOKEN=""
 CFG_ADMIN_ID=""
 CFG_LICENSE_KEY=""
-CFG_API_ID=""
-CFG_API_HASH=""
 CFG_SESSION_STRING=""
-CFG_UDP_PORT=""
 
 collect_config() {
     echo
@@ -158,39 +155,28 @@ collect_config() {
         set -u
     fi
 
-    echo "  1/6. Telegram Bot"
+    echo "  1/4. Telegram Bot"
     echo "       Создайте бота через @BotFather и скопируйте токен."
     CFG_BOT_TOKEN=$(ask "       BOT_TOKEN" "${BOT_TOKEN:-}")
     [[ -z "$CFG_BOT_TOKEN" ]] && die "BOT_TOKEN обязателен"
     echo
 
-    echo "  2/6. Telegram ID владельца"
+    echo "  2/4. Telegram ID владельца"
     echo "       Узнайте свой ID через @userinfobot или @getmyid_bot."
     CFG_ADMIN_ID=$(ask "       ADMIN_ID" "${ADMIN_ID:-}")
     [[ -z "$CFG_ADMIN_ID" ]] && die "ADMIN_ID обязателен"
     echo
 
-    echo "  3/6. Лицензионный ключ"
+    echo "  3/4. Лицензионный ключ"
     echo "       Получен после оплаты SELF-HOST подписки в Service-Bot."
     CFG_LICENSE_KEY=$(ask "       LICENSE_KEY" "${LICENSE_KEY:-}")
     [[ -z "$CFG_LICENSE_KEY" ]] && die "LICENSE_KEY обязателен"
     echo
 
-    echo "  4/6. Telegram API (https://my.telegram.org -> API development tools)"
-    CFG_API_ID=$(ask "       API_ID" "${API_ID:-}")
-    CFG_API_HASH=$(ask "       API_HASH" "${API_HASH:-}")
-    [[ -z "$CFG_API_ID" || -z "$CFG_API_HASH" ]] && die "API_ID и API_HASH обязательны"
-    echo
-
-    echo "  5/6. Session String"
+    echo "  4/4. Session String"
     echo "       Получена при авторизации через веб-страницу Service-Bot."
     CFG_SESSION_STRING=$(ask "       SESSION_STRING" "${SESSION_STRING:-}")
     [[ -z "$CFG_SESSION_STRING" ]] && die "SESSION_STRING обязателен"
-    echo
-
-    echo "  6/6. UDP порт для приёма данных от сервера"
-    echo "       Убедитесь, что порт открыт в файрволе (UDP)."
-    CFG_UDP_PORT=$(ask "       UDP_LISTEN_PORT" "${UDP_LISTEN_PORT:-9200}")
     echo
 }
 
@@ -202,47 +188,11 @@ write_env() {
 BOT_TOKEN=${CFG_BOT_TOKEN}
 ADMIN_ID=${CFG_ADMIN_ID}
 LICENSE_KEY=${CFG_LICENSE_KEY}
-API_ID=${CFG_API_ID}
-API_HASH=${CFG_API_HASH}
 SESSION_STRING=${CFG_SESSION_STRING}
-UDP_LISTEN_HOST=0.0.0.0
-UDP_LISTEN_PORT=${CFG_UDP_PORT}
 ENVEOF
 
     chmod 600 "$INSTALL_DIR/.env"
     ok "Конфигурация сохранена в $INSTALL_DIR/.env"
-}
-
-# ── Firewall ─────────────────────────────────────────────────────────────────
-
-open_firewall() {
-    info "Открываю UDP-порт $CFG_UDP_PORT ..."
-
-    local opened=false
-
-    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "active"; then
-        ufw allow "${CFG_UDP_PORT}/udp" >/dev/null 2>&1 && opened=true
-    fi
-
-    if ! $opened && command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld 2>/dev/null; then
-        firewall-cmd --permanent --add-port="${CFG_UDP_PORT}/udp" >/dev/null 2>&1
-        firewall-cmd --reload >/dev/null 2>&1
-        opened=true
-    fi
-
-    if ! $opened && command -v iptables &>/dev/null; then
-        if ! iptables -C INPUT -p udp --dport "$CFG_UDP_PORT" -j ACCEPT 2>/dev/null; then
-            iptables -A INPUT -p udp --dport "$CFG_UDP_PORT" -j ACCEPT 2>/dev/null && opened=true
-        else
-            opened=true
-        fi
-    fi
-
-    if $opened; then
-        ok "UDP-порт $CFG_UDP_PORT открыт"
-    else
-        warn "Не удалось автоматически открыть порт. Откройте UDP $CFG_UDP_PORT вручную."
-    fi
 }
 
 # ── Create service ───────────────────────────────────────────────────────────
@@ -355,9 +305,6 @@ UNEOF
 # ── Summary ──────────────────────────────────────────────────────────────────
 
 print_summary() {
-    local ext_ip
-    ext_ip=$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || echo "не определён")
-
     echo
     printf "${BOLD}${GREEN}══════════════════════════════════════════════════${NC}\n"
     printf "${BOLD}${GREEN}         Установка завершена!                      ${NC}\n"
@@ -367,14 +314,6 @@ print_summary() {
     echo "  Бинарник:   $INSTALL_DIR/$BINARY_NAME"
     echo "  Конфиг:     $INSTALL_DIR/.env"
     echo "  Удаление:   sudo bash $INSTALL_DIR/uninstall.sh"
-    echo
-    printf "${BOLD}${YELLOW}  !  Важно: сообщите в Service-Bot ваш адрес:${NC}\n"
-    echo
-    printf "     ${BOLD}IP:   ${ext_ip}${NC}\n"
-    printf "     ${BOLD}Порт: ${CFG_UDP_PORT}${NC}\n"
-    echo
-    echo "  Отправьте эти данные в Service-Bot, чтобы"
-    echo "  сервер мог отправлять вам информацию о подарках."
     echo
     printf "${CYAN}  Управление:${NC}\n"
 
@@ -431,7 +370,6 @@ main() {
     collect_config
     write_env
     mkdir -p "$INSTALL_DIR/data"
-    open_firewall
     create_service
     create_uninstall
     print_summary

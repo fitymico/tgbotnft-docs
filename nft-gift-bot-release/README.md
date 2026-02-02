@@ -9,9 +9,7 @@ Self-Host версия работает на вашем сервере и пол
 - Linux (x86_64 или ARM64)
 - Подписка SELF-HOST (приобретается в Service-Bot)
 - Telegram Bot Token (от @BotFather)
-- Telegram API credentials (https://my.telegram.org)
 - Session String (получается при авторизации через Service-Bot)
-- Открытый UDP-порт для приёма данных
 
 ## Быстрая установка
 
@@ -28,9 +26,8 @@ wget -qO- https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/mai
 Установщик автоматически:
 1. Определит дистрибутив и архитектуру
 2. Скачает бинарник
-3. Запросит конфигурацию (6 параметров)
-4. Откроет UDP-порт в файрволе
-5. Создаст и запустит systemd/OpenRC сервис
+3. Запросит конфигурацию (4 параметра)
+4. Создаст и запустит systemd/OpenRC сервис
 
 ## Ручная установка
 
@@ -54,11 +51,7 @@ sudo cat > /opt/nft-gift-bot/.env << 'EOF'
 BOT_TOKEN=123456789:AABBCC...
 ADMIN_ID=123456789
 LICENSE_KEY=ваш-лицензионный-ключ
-API_ID=12345
-API_HASH=abcdef1234567890abcdef1234567890
 SESSION_STRING=ваша-session-string
-UDP_LISTEN_HOST=0.0.0.0
-UDP_LISTEN_PORT=9200
 EOF
 
 sudo chmod 600 /opt/nft-gift-bot/.env
@@ -97,24 +90,6 @@ sudo systemctl enable nft-gift-bot
 sudo systemctl start nft-gift-bot
 ```
 
-### 5. Откройте UDP-порт
-
-```bash
-# UFW (Ubuntu/Debian)
-sudo ufw allow 9200/udp
-
-# firewalld (CentOS/Fedora)
-sudo firewall-cmd --permanent --add-port=9200/udp
-sudo firewall-cmd --reload
-
-# iptables
-sudo iptables -A INPUT -p udp --dport 9200 -j ACCEPT
-```
-
-### 6. Сообщите адрес в Service-Bot
-
-После установки сообщите в Service-Bot ваш внешний IP и UDP-порт, чтобы сервер начал отправлять данные о подарках.
-
 ## Конфигурация
 
 | Переменная | Описание |
@@ -122,11 +97,7 @@ sudo iptables -A INPUT -p udp --dport 9200 -j ACCEPT
 | `BOT_TOKEN` | Токен Telegram-бота от @BotFather |
 | `ADMIN_ID` | Ваш Telegram ID (числовой) |
 | `LICENSE_KEY` | Лицензионный ключ SELF-HOST подписки |
-| `API_ID` | Telegram API ID (https://my.telegram.org) |
-| `API_HASH` | Telegram API Hash |
 | `SESSION_STRING` | Строка сессии Telethon (из Service-Bot) |
-| `UDP_LISTEN_HOST` | Адрес прослушивания UDP (обычно `0.0.0.0`) |
-| `UDP_LISTEN_PORT` | Порт UDP (по умолчанию `9200`) |
 
 ## Управление
 
