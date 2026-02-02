@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/static/img/logo.webp" alt="Telegram Bot NFT" width="120" />
+  <img src="logo.webp" alt="Telegram Bot NFT" width="120" />
 </p>
 
 <h1 align="center">Telegram Bot NFT</h1>

@@ -437,15 +437,16 @@ async function processFullCycle(): Promise<void> {
 async function main(): Promise<void> {
     // Проверка лицензии
     const licenseKey = process.env.LICENSE_KEY;
-    if (licenseKey) {
-        console.log("[LICENSE] Проверка лицензии...");
-        const activated = await activateLicense(licenseKey);
-        if (!activated) {
-            console.error("[LICENSE] Не удалось активировать лицензию. Завершение.");
-            process.exit(1);
-        }
-    } else {
-        console.log("[LICENSE] LICENSE_KEY не задан, работа без лицензии (для разработки)");
+    if (!licenseKey) {
+        console.error("[LICENSE] ❌ LICENSE_KEY не задан! Работа без лицензии запрещена.");
+        process.exit(1);
+    }
+    
+    console.log("[LICENSE] Проверка лицензии...");
+    const activated = await activateLicense(licenseKey);
+    if (!activated) {
+        console.error("[LICENSE] Не удалось активировать лицензию. Завершение.");
+        process.exit(1);
     }
     
     try {

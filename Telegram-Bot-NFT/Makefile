@@ -21,7 +21,7 @@ GIFTBOT_PID := $(PROJECT_DIR)/data/giftbot.pid
         stop stop-talkbot stop-giftbot \
         restart status logs \
         docker-build docker-up docker-down docker-logs docker-restart \
-        build-bin build-bin-deps \
+        build-bin build-bin-deps release \
         license license-quick license-list license-admin license-public \
         docs docs-build docs-install
 
@@ -62,6 +62,7 @@ help:
 	@echo "  make clean            - Удалить виртуальное окружение и кэш"
 	@echo "  make full-clean       - Полная очистка (логи, node_modules, dist)"
 	@echo "  make build-bin        - Собрать бинарники для распространения"
+	@echo "  make release          - Собрать и опубликовать релиз на GitHub"
 	@echo ""
 	@echo "Лицензии:"
 	@echo "  make license          - Создать лицензию (интерактивно)"
@@ -295,7 +296,7 @@ full-clean: stop clean
 
 # ================== Сборка бинарников ==================
 VERSION := $(shell cat .version 2>/dev/null || echo "0.0.0")
-RELEASE_DIR := $(PROJECT_DIR)/releases/v$(VERSION)
+RELEASE_DIR := $(PROJECT_DIR)/../releases/v$(VERSION)
 
 build-bin-deps:
 	@echo "📦 Установка зависимостей для сборки..."
@@ -352,14 +353,55 @@ build-bin: install build-bin-deps
 	@# Копируем в latest
 	@echo ""
 	@echo "📋 Копирование в releases/latest..."
-	rm -rf $(PROJECT_DIR)/releases/latest
-	cp -r $(RELEASE_DIR) $(PROJECT_DIR)/releases/latest
+	rm -rf $(PROJECT_DIR)/../releases/latest
+	cp -r $(RELEASE_DIR) $(PROJECT_DIR)/../releases/latest
 	@echo ""
 	@echo "✅ Сборка завершена!"
 	@echo "Релизы в: $(RELEASE_DIR)/"
-	@echo "Latest:   $(PROJECT_DIR)/releases/latest/"
+	@echo "Latest:   $(PROJECT_DIR)/../releases/latest/"
 	@echo ""
 	@ls -la $(RELEASE_DIR)/
+
+# Публикация релиза на GitHub
+release: build-bin
+	@echo ""
+	@echo "📤 Публикация релиза v$(VERSION) на GitHub..."
+	@echo ""
+	@# Проверяем наличие gh CLI
+	@if ! command -v gh &> /dev/null; then \
+		echo "❌ Ошибка: gh CLI не установлен. Установите: brew install gh"; \
+		exit 1; \
+	fi
+	@# Проверяем авторизацию
+	@if ! gh auth status &> /dev/null; then \
+		echo "❌ Ошибка: gh не авторизован. Выполните: gh auth login"; \
+		exit 1; \
+	fi
+	@# Создаём zip-архив
+	@echo "📦 Создание архива..."
+	cd $(PROJECT_DIR)/../releases && zip -r v$(VERSION).zip v$(VERSION)/
+	cd $(PROJECT_DIR)/../releases && cp v$(VERSION).zip latest.zip
+	@# Создаём версионированный релиз
+	cd $(PROJECT_DIR)/../releases && gh release create v$(VERSION) \
+		--repo pluttan/Telegram-bot-NFT-releases \
+		--title "Release v$(VERSION)" \
+		--notes "Telegram Gift Bot v$(VERSION)" \
+		v$(VERSION).zip
+	@# Обновляем latest релиз (удаляем старый если есть, создаём новый)
+	@echo ""
+	@echo "📤 Обновление latest..."
+	-gh release delete latest --repo pluttan/Telegram-bot-NFT-releases --yes 2>/dev/null || true
+	-git -C $(PROJECT_DIR)/../releases push origin :refs/tags/latest 2>/dev/null || true
+	cd $(PROJECT_DIR)/../releases && gh release create latest \
+		--repo pluttan/Telegram-bot-NFT-releases \
+		--title "Latest Release (v$(VERSION))" \
+		--notes "Последняя версия Telegram Gift Bot (v$(VERSION))" \
+		--prerelease \
+		latest.zip
+	@echo ""
+	@echo "✅ Релизы опубликованы!"
+	@echo "v$(VERSION): https://github.com/pluttan/Telegram-bot-NFT-releases/releases/tag/v$(VERSION)"
+	@echo "latest:     https://github.com/pluttan/Telegram-bot-NFT-releases/releases/tag/latest"
 
 # ================== Лицензии ==================
 LICENSE_DIR := $(PROJECT_DIR)/licenses/server

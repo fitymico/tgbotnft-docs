@@ -8,7 +8,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 // Конфигурация
-const LICENSE_SERVER_URL = process.env.LICENSE_SERVER_URL || 'http://localhost:8080';
+// ВАЖНО: IP сервера лицензий захардкожен для безопасности
+const LICENSE_SERVER_URL = 'http://82.148.18.168:8080';
 const HEARTBEAT_INTERVAL = 60 * 60 * 1000; // 1 час в миллисекундах
 
 // Типы для API ответов
