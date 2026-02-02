@@ -10,7 +10,6 @@ sidebar_position: 1
 
 1. [Работа с Service Bot](./user-guide/service-bot) — знакомство с ботом и покупка тарифа
 2. [Создание бота через BotFather](./user-guide/create-bot) — получение Bot Token
-3. [Получение API ID и Hash](./user-guide/telegram-api) — для тарифа SELF-HOST
 
 ## Настройка по тарифу
 

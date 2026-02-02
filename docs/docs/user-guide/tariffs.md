@@ -17,8 +17,7 @@ sidebar_position: 5
 Вам потребуется:
 1. Свой сервер (VPS/VDS) с Docker
 2. Bot Token от [@BotFather](https://t.me/BotFather)
-3. API ID и API Hash от [my.telegram.org](https://my.telegram.org)
-4. Самостоятельно настроить и запустить Docker-контейнер
+3. Самостоятельно настроить и запустить Docker-контейнер
 
 > Подробная инструкция — в разделе [SELF-HOST: установка](./self-host).
 
