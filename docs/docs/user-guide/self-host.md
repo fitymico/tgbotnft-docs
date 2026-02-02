@@ -46,7 +46,7 @@ SB-XXXXXXXXXXXXXXXX
 Подключитесь к серверу и выполните:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/nft-gift-bot-release/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/main/install.sh | sudo bash
 ```
 
 Установщик автоматически:
@@ -73,7 +73,7 @@ curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/nft-gift-bot-release/main/
 
 ```bash
 sudo mkdir -p /opt/nft-gift-bot
-sudo curl -fsSL https://github.com/YOUR_ORG/nft-gift-bot-release/releases/latest/download/nft-gift-bot-linux-amd64 \
+sudo curl -fsSL https://github.com/seventyzero/nft-gift-bot-release/raw/main/nft-gift-bot-linux-amd64 \
     -o /opt/nft-gift-bot/nft-gift-bot
 sudo chmod +x /opt/nft-gift-bot/nft-gift-bot
 ```
@@ -170,7 +170,7 @@ curl -s https://api.ipify.org
 Повторно запустите установщик:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/nft-gift-bot-release/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/main/install.sh | sudo bash
 ```
 
 Существующая конфигурация `.env` сохранится — установщик подставит текущие значения как умолчания.
@@ -179,7 +179,7 @@ curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/nft-gift-bot-release/main/
 
 ```bash
 sudo systemctl stop nft-gift-bot
-sudo curl -fsSL https://github.com/YOUR_ORG/nft-gift-bot-release/releases/latest/download/nft-gift-bot-linux-amd64 \
+sudo curl -fsSL https://github.com/seventyzero/nft-gift-bot-release/raw/main/nft-gift-bot-linux-amd64 \
     -o /opt/nft-gift-bot/nft-gift-bot
 sudo chmod +x /opt/nft-gift-bot/nft-gift-bot
 sudo systemctl start nft-gift-bot

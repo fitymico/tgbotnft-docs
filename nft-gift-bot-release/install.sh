@@ -3,8 +3,8 @@
 #  NFT Gift Bot — Installer
 #
 #  Usage:
-#    curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/nft-gift-bot-release/main/install.sh | sudo bash
-#    wget -qO- https://raw.githubusercontent.com/YOUR_ORG/nft-gift-bot-release/main/install.sh | sudo bash
+#    curl -fsSL https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/main/install.sh | sudo bash
+#    wget -qO- https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/main/install.sh | sudo bash
 #
 #  Скачивает бинарник, настраивает окружение, создаёт systemd/OpenRC-сервис.
 #
@@ -25,9 +25,8 @@ INSTALL_DIR="/opt/nft-gift-bot"
 SERVICE_NAME="nft-gift-bot"
 BINARY_NAME="nft-gift-bot"
 
-# GitHub Release URL — замените на свой репозиторий
-GITHUB_REPO="${GITHUB_REPO:-YOUR_ORG/nft-gift-bot-release}"
-RELEASE_TAG="${RELEASE_TAG:-latest}"
+# GitHub repo
+GITHUB_REPO="${GITHUB_REPO:-seventyzero/nft-gift-bot-release}"
 
 # ── Colours & helpers ────────────────────────────────────────────────────────
 
@@ -119,13 +118,7 @@ detect_arch() {
 
 download_binary() {
     local arch="$1"
-    local download_url
-
-    if [[ "$RELEASE_TAG" == "latest" ]]; then
-        download_url="https://github.com/${GITHUB_REPO}/releases/latest/download/${BINARY_NAME}-linux-${arch}"
-    else
-        download_url="https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_TAG}/${BINARY_NAME}-linux-${arch}"
-    fi
+    local download_url="https://github.com/${GITHUB_REPO}/raw/main/${BINARY_NAME}-linux-${arch}"
 
     info "Скачиваю бинарник..."
     info "URL: $download_url"

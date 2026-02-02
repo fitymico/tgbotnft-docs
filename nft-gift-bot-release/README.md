@@ -16,18 +16,18 @@ Self-Host версия работает на вашем сервере и пол
 ## Быстрая установка
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/nft-gift-bot-release/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/main/install.sh | sudo bash
 ```
 
 или
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/YOUR_ORG/nft-gift-bot-release/main/install.sh | sudo bash
+wget -qO- https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/main/install.sh | sudo bash
 ```
 
 Установщик автоматически:
 1. Определит дистрибутив и архитектуру
-2. Скачает бинарник из GitHub Releases
+2. Скачает бинарник
 3. Запросит конфигурацию (6 параметров)
 4. Откроет UDP-порт в файрволе
 5. Создаст и запустит systemd/OpenRC сервис
@@ -36,13 +36,13 @@ wget -qO- https://raw.githubusercontent.com/YOUR_ORG/nft-gift-bot-release/main/i
 
 ### 1. Скачайте бинарник
 
-Перейдите в [Releases](../../releases) и скачайте файл для вашей архитектуры:
+Доступные бинарники:
 - `nft-gift-bot-linux-amd64` — для x86_64
 - `nft-gift-bot-linux-arm64` — для ARM64 (Raspberry Pi 4, Oracle Cloud и т.д.)
 
 ```bash
 sudo mkdir -p /opt/nft-gift-bot
-sudo curl -fsSL https://github.com/YOUR_ORG/nft-gift-bot-release/releases/latest/download/nft-gift-bot-linux-amd64 \
+sudo curl -fsSL https://github.com/seventyzero/nft-gift-bot-release/raw/main/nft-gift-bot-linux-amd64 \
     -o /opt/nft-gift-bot/nft-gift-bot
 sudo chmod +x /opt/nft-gift-bot/nft-gift-bot
 ```
@@ -149,14 +149,14 @@ sudo systemctl stop nft-gift-bot
 Повторно запустите установщик — он обновит бинарник, сохранив существующую конфигурацию `.env`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/nft-gift-bot-release/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/main/install.sh | sudo bash
 ```
 
 Или вручную:
 
 ```bash
 sudo systemctl stop nft-gift-bot
-sudo curl -fsSL https://github.com/YOUR_ORG/nft-gift-bot-release/releases/latest/download/nft-gift-bot-linux-amd64 \
+sudo curl -fsSL https://github.com/seventyzero/nft-gift-bot-release/raw/main/nft-gift-bot-linux-amd64 \
     -o /opt/nft-gift-bot/nft-gift-bot
 sudo chmod +x /opt/nft-gift-bot/nft-gift-bot
 sudo systemctl start nft-gift-bot
