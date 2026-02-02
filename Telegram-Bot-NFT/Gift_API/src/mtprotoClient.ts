@@ -59,10 +59,12 @@ export async function saveSession(): Promise<void> {
         console.log("Сессия сохранена в файл:", SESSIONFILE);
     }
     
-    // Выводим сессию для .env если запущен без файла
-    console.log("\n=== SESSION_STRING для .env ===");
-    console.log(NEWSESSION);
-    console.log("================================\n");
+    // Выводим сессию только в интерактивном режиме (TTY)
+    if (process.stdin.isTTY) {
+        console.log("\n=== SESSION_STRING для .env ===");
+        console.log(NEWSESSION);
+        console.log("================================\n");
+    }
     return;
 }
 

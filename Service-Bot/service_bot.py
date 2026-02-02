@@ -20,7 +20,6 @@ from aiogram.fsm.state import State, StatesGroup
 from dotenv import load_dotenv
 
 load_dotenv()
-ADMIN_ID = 981919884
 
 # Настройка логирования
 logging.basicConfig(
@@ -29,7 +28,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8547506087:AAE4nn8YmZVpwA5IU3nHU311xrFnKEyCpBw")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN не задан. Установите переменную окружения BOT_TOKEN.")
+
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+if not ADMIN_ID:
+    raise ValueError("ADMIN_ID не задан. Установите переменную окружения ADMIN_ID.")
 
 SUBSCRIPTION_PLANS = {
     "basic": {"name": "SELF-HOST", "price": 1, "duration_days": 30, "stars": 1, "equal": "(~199₽)"},
@@ -48,11 +53,11 @@ class BotSetupStates(StatesGroup):
 class Database:
     def __init__(self):
         self.conn = sqlite3.connect('service_bot.db', check_same_thread=False)
-        self.cursor = self.conn.cursor()
         self.create_tables()
     
     def create_tables(self):
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 telegram_id INTEGER UNIQUE,
@@ -68,8 +73,8 @@ class Database:
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        
-        self.cursor.execute('''
+
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS license_keys (
                 key TEXT PRIMARY KEY,
                 user_id INTEGER,
@@ -80,8 +85,8 @@ class Database:
                 FOREIGN KEY (user_id) REFERENCES users (user_id)
             )
         ''')
-        
-        self.cursor.execute('''
+
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS refund_requests (
                 request_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -94,7 +99,7 @@ class Database:
             )
         ''')
 
-        self.cursor.execute('''
+        cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments (
             payment_id TEXT PRIMARY KEY,
             user_id INTEGER,
@@ -106,7 +111,7 @@ class Database:
             )
         ''')
 
-        self.cursor.execute('''
+        cursor.execute('''
         CREATE TABLE IF NOT EXISTS reminders (
             reminder_id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -119,8 +124,8 @@ class Database:
             FOREIGN KEY (user_id) REFERENCES users (user_id)
             )
         ''')
-        
-        self.cursor.execute('''
+
+        cursor.execute('''
         CREATE TABLE IF NOT EXISTS queued_subscriptions (
             queue_id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -132,17 +137,18 @@ class Database:
             FOREIGN KEY (user_id) REFERENCES users (user_id)
             )
         ''')
-        
+
         try:
-            self.cursor.execute('ALTER TABLE users ADD COLUMN session_string TEXT')
+            cursor.execute('ALTER TABLE users ADD COLUMN session_string TEXT')
         except sqlite3.OperationalError:
             pass
-        
+
         self.conn.commit()
     
     def save_payment(self, user_id, license_key, stars_amount, telegram_payment_charge_id):
         """Сохранить информацию о платеже"""
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             INSERT INTO payments (payment_id, user_id, license_key, stars_amount, telegram_payment_charge_id)
             VALUES (?, ?, ?, ?, ?)
         ''', (telegram_payment_charge_id, user_id, license_key, stars_amount, telegram_payment_charge_id))
@@ -150,33 +156,37 @@ class Database:
 
     def get_payment_by_license(self, license_key):
         """Получить платеж по лицензии"""
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             SELECT * FROM payments WHERE license_key = ? ORDER BY created_at DESC LIMIT 1
         ''', (license_key,))
-        return self.cursor.fetchone()
+        return cursor.fetchone()
     
     def create_user(self, telegram_id, username):
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             INSERT OR IGNORE INTO users (telegram_id, username) VALUES (?, ?)
         ''', (telegram_id, username))
         self.conn.commit()
-        return self.cursor.lastrowid
+        return cursor.lastrowid
     
     def get_user(self, telegram_id):
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             SELECT * FROM users WHERE telegram_id = ?
         ''', (telegram_id,))
-        return self.cursor.fetchone()
+        return cursor.fetchone()
     
     def has_user_used_refund(self, telegram_id):
         """Проверить, использовал ли пользователь возврат"""
         if telegram_id == ADMIN_ID:
             return False
 
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             SELECT has_used_refund FROM users WHERE telegram_id = ?
         ''', (telegram_id,))
-        result = self.cursor.fetchone()
+        result = cursor.fetchone()
         return result and result[0] == 1 if result else False
     
     def mark_refund_used(self, telegram_id):
@@ -184,72 +194,82 @@ class Database:
         if telegram_id == ADMIN_ID:
             return True
 
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             UPDATE users SET has_used_refund = 1 WHERE telegram_id = ?
         ''', (telegram_id,))
         self.conn.commit()
-        return self.cursor.rowcount > 0
+        return cursor.rowcount > 0
     
     def reset_refund_status(self, telegram_id):
         """Сбросить статус возврата (для администратора)"""
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             UPDATE users SET has_used_refund = 0 WHERE telegram_id = ?
         ''', (telegram_id,))
         self.conn.commit()
-        return self.cursor.rowcount > 0
+        return cursor.rowcount > 0
     
     def get_bot_settings(self, telegram_id):
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             SELECT bot_token, api_id, api_hash FROM users WHERE telegram_id = ?
         ''', (telegram_id,))
-        return self.cursor.fetchone()
+        return cursor.fetchone()
     
     def update_bot_token(self, telegram_id, bot_token):
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             UPDATE users SET bot_token = ? WHERE telegram_id = ?
         ''', (bot_token, telegram_id))
         self.conn.commit()
     
     def update_api_id(self, telegram_id, api_id):
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             UPDATE users SET api_id = ? WHERE telegram_id = ?
         ''', (api_id, telegram_id))
         self.conn.commit()
     
     def update_api_hash(self, telegram_id, api_hash):
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             UPDATE users SET api_hash = ? WHERE telegram_id = ?
         ''', (api_hash, telegram_id))
         self.conn.commit()
     
     def update_session_string(self, telegram_id, session_string):
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             UPDATE users SET session_string = ? WHERE telegram_id = ?
         ''', (session_string, telegram_id))
         self.conn.commit()
     
     def get_session_string(self, telegram_id):
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             SELECT session_string FROM users WHERE telegram_id = ?
         ''', (telegram_id,))
-        result = self.cursor.fetchone()
+        result = cursor.fetchone()
         return result[0] if result else None
     
     def get_active_license(self, telegram_id):
         """Получить активную лицензию пользователя"""
-        self.cursor.execute('''
-            SELECT u.*, lk.expires_at 
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT u.*, lk.expires_at
             FROM users u
             LEFT JOIN license_keys lk ON u.license_key = lk.key
             WHERE u.telegram_id = ? AND lk.is_active = 1 AND lk.expires_at > datetime('now')
         ''', (telegram_id,))
-        return self.cursor.fetchone()
+        return cursor.fetchone()
     
     def update_user_subscription(self, telegram_id, plan, license_key, end_date):
-        self.cursor.execute('''
-            UPDATE users SET 
-                subscription_plan = ?, 
-                license_key = ?, 
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            UPDATE users SET
+                subscription_plan = ?,
+                license_key = ?,
                 subscription_end_date = ?
             WHERE telegram_id = ?
         ''', (plan, license_key, end_date, telegram_id))
@@ -258,8 +278,9 @@ class Database:
     def create_license_key(self, user_id, plan, duration_days):
         key = self.generate_license_key()
         expires_at = datetime.now() + timedelta(days=duration_days)
-        
-        self.cursor.execute('''
+
+        cursor = self.conn.cursor()
+        cursor.execute('''
             INSERT INTO license_keys (key, user_id, plan, expires_at) VALUES (?, ?, ?, ?)
         ''', (key, user_id, plan, expires_at.isoformat()))
         self.conn.commit()
@@ -272,46 +293,51 @@ class Database:
         return f"SB-{uuid.uuid4().hex[:16].upper()}"
     
     def validate_license_key(self, key):
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             SELECT lk.*, u.telegram_id FROM license_keys lk
             JOIN users u ON lk.user_id = u.user_id
             WHERE lk.key = ? AND lk.is_active = 1 AND lk.expires_at > datetime('now')
         ''', (key,))
-        return self.cursor.fetchone()
+        return cursor.fetchone()
     
     def deactivate_license(self, license_key):
         """Деактивировать лицензию"""
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             UPDATE license_keys SET is_active = 0 WHERE key = ?
         ''', (license_key,))
-        self.cursor.execute('''
+        cursor.execute('''
             DELETE FROM reminders WHERE license_key = ?
         ''', (license_key,))
         self.conn.commit()
-        return self.cursor.rowcount > 0
+        return cursor.rowcount > 0
     
     def create_refund_request(self, user_id, license_key, stars_amount):
         """Создать запрос на возврат"""
-        self.cursor.execute('''
-            INSERT INTO refund_requests (user_id, license_key, stars_amount) 
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            INSERT INTO refund_requests (user_id, license_key, stars_amount)
             VALUES (?, ?, ?)
         ''', (user_id, license_key, stars_amount))
         self.conn.commit()
-        return self.cursor.lastrowid
+        return cursor.lastrowid
     
     def get_refund_request(self, user_id, license_key):
         """Получить запрос на возврат"""
-        self.cursor.execute('''
-            SELECT * FROM refund_requests 
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT * FROM refund_requests
             WHERE user_id = ? AND license_key = ? AND status = 'pending'
         ''', (user_id, license_key))
-        return self.cursor.fetchone()
+        return cursor.fetchone()
     
     def update_refund_status(self, request_id, status):
         """Обновить статус возврата"""
         processed_at = datetime.now().isoformat()
-        self.cursor.execute('''
-            UPDATE refund_requests 
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            UPDATE refund_requests
             SET status = ?, processed_at = ?
             WHERE request_id = ?
         ''', (status, processed_at, request_id))
@@ -322,16 +348,17 @@ class Database:
         three_days_before = expires_at - timedelta(days=3)
         one_hour_before = expires_at - timedelta(hours=1)
 
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             DELETE FROM reminders WHERE license_key = ?
         ''', (license_key,))
-        
-        self.cursor.execute('''
+
+        cursor.execute('''
             INSERT INTO reminders (user_id, license_key, reminder_type, scheduled_time)
             VALUES (?, ?, ?, ?)
         ''', (user_id, license_key, '3_days', three_days_before.isoformat()))
-        
-        self.cursor.execute('''
+
+        cursor.execute('''
             INSERT INTO reminders (user_id, license_key, reminder_type, scheduled_time)
             VALUES (?, ?, ?, ?)
         ''', (user_id, license_key, '1_hour', one_hour_before.isoformat()))
@@ -340,56 +367,62 @@ class Database:
     def get_due_reminders(self):
         """Получить напоминания, которые нужно отправить"""
         now = datetime.now().isoformat()
-        
-        self.cursor.execute('''
+
+        cursor = self.conn.cursor()
+        cursor.execute('''
             SELECT r.*, u.telegram_id, u.username, lk.expires_at, u.subscription_plan
             FROM reminders r
             JOIN users u ON r.user_id = u.user_id
             JOIN license_keys lk ON r.license_key = lk.key
             WHERE r.sent = 0 AND r.scheduled_time <= ? AND lk.is_active = 1
         ''', (now,))
-        
-        reminders = self.cursor.fetchall()
+
+        reminders = cursor.fetchall()
         return reminders
     
     def mark_reminder_sent(self, reminder_id):
         sent_at = datetime.now().isoformat()
-        
-        self.cursor.execute('''
+
+        cursor = self.conn.cursor()
+        cursor.execute('''
             UPDATE reminders SET sent = 1, sent_at = ? WHERE reminder_id = ?
         ''', (sent_at, reminder_id))
         self.conn.commit()
     
     def save_queued_subscription(self, user_id, telegram_id, plan, stars_amount, telegram_payment_charge_id):
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             INSERT INTO queued_subscriptions (user_id, telegram_id, plan, stars_amount, telegram_payment_charge_id)
             VALUES (?, ?, ?, ?, ?)
         ''', (user_id, telegram_id, plan, stars_amount, telegram_payment_charge_id))
         self.conn.commit()
-        return self.cursor.lastrowid
+        return cursor.lastrowid
     
     def get_queued_subscription(self, telegram_id):
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             SELECT * FROM queued_subscriptions WHERE telegram_id = ? ORDER BY created_at DESC LIMIT 1
         ''', (telegram_id,))
-        return self.cursor.fetchone()
+        return cursor.fetchone()
     
     def delete_queued_subscription(self, telegram_id):
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             DELETE FROM queued_subscriptions WHERE telegram_id = ?
         ''', (telegram_id,))
         self.conn.commit()
-        return self.cursor.rowcount > 0
+        return cursor.rowcount > 0
     
     def get_expired_subscriptions_with_queue(self):
         now = datetime.now().isoformat()
-        self.cursor.execute('''
+        cursor = self.conn.cursor()
+        cursor.execute('''
             SELECT u.user_id, u.telegram_id, u.license_key, qs.*
             FROM users u
             JOIN queued_subscriptions qs ON u.telegram_id = qs.telegram_id
             WHERE u.subscription_end_date < ? AND u.license_key IS NOT NULL
         ''', (now,))
-        return self.cursor.fetchall()
+        return cursor.fetchall()
 
 db = Database()
 user_invoice_data = {}
@@ -727,7 +760,25 @@ async def cancel_invoice(callback: CallbackQuery):
 
 @dp.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery):
-    await bot.answer_pre_checkout_query(query.id, ok=True)
+    try:
+        payload = query.invoice_payload
+        if not payload:
+            await bot.answer_pre_checkout_query(query.id, ok=False, error_message="Некорректные данные платежа")
+            return
+        parts = payload.split("_")
+        payload_type = parts[0] if len(parts) > 0 else None
+        plan_id = parts[1] if len(parts) > 1 else None
+        if payload_type not in ("plan", "renew") or not plan_id or plan_id not in SUBSCRIPTION_PLANS:
+            await bot.answer_pre_checkout_query(query.id, ok=False, error_message="Неверный тарифный план")
+            return
+        plan = SUBSCRIPTION_PLANS[plan_id]
+        if query.total_amount != plan["price"]:
+            await bot.answer_pre_checkout_query(query.id, ok=False, error_message="Несоответствие суммы платежа")
+            return
+        await bot.answer_pre_checkout_query(query.id, ok=True)
+    except Exception as e:
+        logger.error(f"Ошибка pre_checkout: {e}")
+        await bot.answer_pre_checkout_query(query.id, ok=False, error_message="Внутренняя ошибка")
 
 @dp.message(F.successful_payment)
 async def successful_payment(message: Message):

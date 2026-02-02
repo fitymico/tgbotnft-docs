@@ -11,7 +11,6 @@ import * as dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { loginFlow, saveSession, client } from './mtprotoClient.js';
 import { getStarGifts, payStarGift, getStars } from './processWrap.js';
-import { availableMemory } from 'process';
 import { activateLicense, deactivateLicense, isLicenseActive } from './license.js';
 
 // Определяем корневую директорию проекта
@@ -38,7 +37,7 @@ function getProjectRoot(): string {
 const PROJECT_ROOT = getProjectRoot();
 dotenv.config({ path: path.join(PROJECT_ROOT, '.env') });
 
-const targetPeer = await client.getInputEntity('me');
+let targetPeer: any;
 interface aiogramBotStatus {
     is_running: boolean,
     status_text: string,
@@ -219,20 +218,19 @@ function parseDistribution(distribution: string): PurchaseRule[] {
 }
 
 const filepathStatus = path.join(PROJECT_ROOT, "data/status.json")
-const status = JSON.parse(fs.readFileSync(filepathStatus, "utf8")) as {
-    is_running: boolean;
-    status_text: string;
-    distribution: string;
-    iterations_total: number;
-    iteration_current: number;
-    delay: number;
-};
 
 //======================================================================================================
 
 async function processFullCycle(): Promise<void> {
+    // Перечитываем конфигурацию из status.json каждый цикл
+    const status = loadStatus();
+
     // Узнаем кол-во звезд на балансе
     let starsInfo = await getStars();
+    if (!starsInfo) {
+        console.log("[ERROR] Не удалось получить баланс звёзд");
+        return;
+    }
     let stars = Number(starsInfo.balance.amount.value);
 
     // Подгружаем множество подарков из файла
@@ -252,13 +250,14 @@ async function processFullCycle(): Promise<void> {
         availabilityRemains: g.availabilityRemains
     }));
 
-    if (seen.size === currentGifts.length) {
+    // Фильтруем подарки, которых нет в seen
+    const foundIDs = currentGifts.filter(g => !seen.has(g.id));
+
+    if (foundIDs.length === 0) {
         debugLog("[DEBUG]: Новых подарков не найдено...")
         return
     }
-    else {
-        // Cписок с новыми ID
-        const foundIDs = currentGifts.filter(id => !seen.has(id.id))
+    {
 
         // Проверяем подарки с нулевым доступным количеством и автоматически добавляем их в seen
         const unavailableGifts = foundIDs.filter(gift => 
@@ -379,7 +378,8 @@ async function processFullCycle(): Promise<void> {
                     );
 
                     if (!result) {
-                        throw new Error("Покупка вернула пустой результат");
+                        logPurchase(`[ERROR] Покупка подарка ${giftIdBigInt} вернула пустой результат, пропускаем`);
+                        continue;
                     }
 
                     stars -= gift.stars;
@@ -451,6 +451,7 @@ async function main(): Promise<void> {
     
     try {
         await client.connect();
+        targetPeer = await client.getInputEntity('me');
         console.log("--- Подключение выполнено ---");
         console.log("--- Сканирование подарков ---");
 
