@@ -11,11 +11,11 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://pluttan.github.io',
-  baseUrl: '/Telegram-Bot-NFT-docs/',
+  url: 'https://seventyzero.github.io',
+  baseUrl: '/tgbotnft-docs/',
 
-  organizationName: 'pluttan',
-  projectName: 'Telegram-Bot-NFT-docs',
+  organizationName: 'seventyzero',
+  projectName: 'tgbotnft-docs',
   trailingSlash: false,
 
   onBrokenLinks: 'throw',
@@ -31,7 +31,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/pluttan/Telegram-Bot-NFT-docs/tree/main/',
+          editUrl: 'https://github.com/seventyzero/tgbotnft-docs/tree/main/',
         },
         blog: false,
         theme: {
@@ -66,7 +66,7 @@ const config: Config = {
           label: 'Установка',
         },
         {
-          href: 'https://github.com/Dimopster/Telegram-Bot-NFT',
+          href: 'https://github.com/seventyzero/tgbotnft',
           label: 'GitHub',
           position: 'right',
         },
