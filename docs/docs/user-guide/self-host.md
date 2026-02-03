@@ -11,7 +11,6 @@ sidebar_position: 6
 - Сервер (VPS/VDS) с **Linux** (Ubuntu 20.04+ рекомендуется)
 - **Bot Token** от [@BotFather](https://t.me/BotFather)
 - **Лицензионный ключ** (получен после оплаты в Service Bot)
-- **Session String** (получена при авторизации через Service-Bot)
 
 ## Шаг 1. Получите лицензионный ключ
 
@@ -27,11 +26,7 @@ SB-XXXXXXXXXXXXXXXX
 
 Если Вы ещё не создали бота — следуйте инструкции в разделе [Создание бота через BotFather](./create-bot).
 
-## Шаг 3. Пройдите авторизацию в Service-Bot
-
-В Service-Bot нажмите кнопку авторизации — откроется веб-страница. После авторизации Вы получите **Session String**. Сохраните её.
-
-## Шаг 4. Установка (автоматическая)
+## Шаг 3. Установка (автоматическая)
 
 Подключитесь к серверу и выполните:
 
@@ -42,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/ma
 Установщик автоматически:
 1. Определит Ваш дистрибутив и архитектуру
 2. Скачает бинарник
-3. Запросит конфигурацию (4 параметра)
+3. Запросит конфигурацию (3 параметра)
 4. Создаст и запустит systemd-сервис
 
 ### Параметры, которые запросит установщик
@@ -52,11 +47,26 @@ curl -fsSL https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/ma
 | 1 | BOT_TOKEN | @BotFather |
 | 2 | ADMIN_ID | @userinfobot |
 | 3 | LICENSE_KEY | Service-Bot (после оплаты) |
-| 4 | SESSION_STRING | Service-Bot (авторизация) |
 
-## Шаг 4 (альтернатива). Ручная установка
+## Шаг 4. Авторизация Telegram-аккаунта
 
-### 4.1. Скачайте бинарник
+После установки бот запущен, но требуется авторизация Telegram-аккаунта:
+
+1. Откройте бота в Telegram и отправьте `/start`
+2. Бот предложит пройти авторизацию — отправьте `/auth`
+3. Введите номер телефона (в формате `+7XXXXXXXXXX`)
+4. Введите код подтверждения из Telegram (через пробелы или дефисы: `1 2 3 4 5`)
+5. Если включена двухфакторная аутентификация — введите пароль
+
+После успешной авторизации бот сохранит сессию локально. Повторная авторизация не потребуется после перезапуска.
+
+:::tip
+Код подтверждения рекомендуется вводить через пробелы или дефисы (например, `1 2 3 4 5` вместо `12345`), чтобы Telegram не заблокировал сообщение с кодом.
+:::
+
+## Шаг 3 (альтернатива). Ручная установка
+
+### 3a.1. Скачайте бинарник
 
 ```bash
 sudo mkdir -p /opt/nft-gift-bot
@@ -67,7 +77,7 @@ sudo chmod +x /opt/nft-gift-bot/nft-gift-bot
 
 Для ARM64 (Raspberry Pi 4, Oracle Cloud) замените `amd64` на `arm64`.
 
-### 4.2. Создайте конфигурацию
+### 3a.2. Создайте конфигурацию
 
 ```bash
 sudo nano /opt/nft-gift-bot/.env
@@ -79,7 +89,6 @@ sudo nano /opt/nft-gift-bot/.env
 BOT_TOKEN=123456789:AABBCC...
 ADMIN_ID=123456789
 LICENSE_KEY=SB-XXXXXXXXXXXXXXXX
-SESSION_STRING=ваша-session-string
 ```
 
 ```bash
@@ -87,7 +96,7 @@ sudo chmod 600 /opt/nft-gift-bot/.env
 sudo mkdir -p /opt/nft-gift-bot/data
 ```
 
-### 4.3. Создайте systemd-сервис
+### 3a.3. Создайте systemd-сервис
 
 ```bash
 sudo cat > /etc/systemd/system/nft-gift-bot.service << 'EOF'
@@ -154,7 +163,7 @@ sudo bash /opt/nft-gift-bot/uninstall.sh
 ## Безопасность
 
 - Файл `.env` содержит секретные данные — не публикуйте его содержимое
-- Session String даёт доступ к Вашему Telegram-аккаунту — храните её в безопасности
+- Сессия Telegram хранится в `data/session.string` — этот файл даёт доступ к Вашему аккаунту
 
 ## Поддерживаемые дистрибутивы
 

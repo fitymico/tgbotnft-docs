@@ -26,11 +26,33 @@ SESSION_STRING = os.getenv("SESSION_STRING", "")
 
 # ================== UDP listener ==================
 UDP_LISTEN_HOST = "0.0.0.0"
-UDP_LISTEN_PORT = int(os.getenv("UDP_LISTEN_PORT", "0"))  # 0 = random available port
+UDP_LISTEN_PORT = int(os.getenv("UDP_LISTEN_PORT", "0"))
 
 # ================== Data paths ==================
 STATUS_FILE = str(PROJECT_ROOT / "data" / "status.json")
 LOG_FILE = str(PROJECT_ROOT / "data" / "bot.log")
+SESSION_FILE = str(PROJECT_ROOT / "data" / "session.string")
+
+
+def load_session() -> str:
+    """Load session from env var or file."""
+    if SESSION_STRING:
+        return SESSION_STRING
+    try:
+        with open(SESSION_FILE, "r") as f:
+            s = f.read().strip()
+            if s:
+                return s
+    except FileNotFoundError:
+        pass
+    return ""
+
+
+def save_session(session_string: str):
+    """Save session string to file."""
+    os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
+    with open(SESSION_FILE, "w") as f:
+        f.write(session_string)
 
 
 def validate_config():
@@ -41,7 +63,5 @@ def validate_config():
         errors.append("ADMIN_ID not set")
     if not LICENSE_KEY:
         errors.append("LICENSE_KEY not set")
-    if not SESSION_STRING:
-        errors.append("SESSION_STRING not set")
     if errors:
         raise ValueError("Config errors:\n" + "\n".join(f"  - {e}" for e in errors))

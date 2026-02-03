@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -21,15 +22,13 @@ if not getattr(sys, "frozen", False):
 
 from config import (
     BOT_TOKEN, ADMIN_ID, LICENSE_KEY,
-    API_ID, API_HASH, SESSION_STRING,
-    UDP_LISTEN_HOST, UDP_LISTEN_PORT,
-    STATUS_FILE, LOG_FILE,
+    API_ID, API_HASH,
+    UDP_LISTEN_HOST, UDP_LISTEN_PORT, STATUS_FILE, LOG_FILE,
+    load_session, save_session,
 )
 from Message_Bot.distribution import validate_distribution
 from Message_Bot.gift_buyer import GiftBuyer
 from Message_Bot.udp_listener import UdpListener
-
-import logging
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -42,29 +41,168 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 user_states = {}
 
-buyer = GiftBuyer(
-    api_id=API_ID,
-    api_hash=API_HASH,
-    session_string=SESSION_STRING,
-    status_file=STATUS_FILE,
-    log_file=LOG_FILE,
-)
+# GiftBuyer and UdpListener — created after session is available
+buyer: GiftBuyer | None = None
+udp: UdpListener | None = None
 
-udp = UdpListener(
-    license_key=LICENSE_KEY,
-    host=UDP_LISTEN_HOST,
-    port=UDP_LISTEN_PORT,
-)
-udp.on_gifts(buyer.handle_new_gifts)
+# Telethon client used during /auth flow (not serializable, so module-level)
+_auth_client = None
+
+
+# ================== Session & buyer init ==================
+async def init_buyer():
+    """Initialize GiftBuyer and UdpListener with current session."""
+    global buyer, udp
+
+    session = load_session()
+    if not session:
+        return False
+
+    buyer = GiftBuyer(
+        api_id=API_ID,
+        api_hash=API_HASH,
+        session_string=session,
+        status_file=STATUS_FILE,
+        log_file=LOG_FILE,
+    )
+    await buyer.connect()
+
+    udp = UdpListener(
+        license_key=LICENSE_KEY,
+        host=UDP_LISTEN_HOST,
+        port=UDP_LISTEN_PORT,
+    )
+    udp.on_gifts(buyer.handle_new_gifts)
+    await udp.start()
+
+    logger.info("Buyer and UDP listener started")
+    return True
+
+
+# ================== Auth flow ==================
+async def cmd_auth(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    if load_session():
+        await message.answer(
+            "Сессия уже существует. Бот авторизован.\n"
+            "Для повторной авторизации удалите файл data/session.string и перезапустите."
+        )
+        return
+
+    await message.answer("Введите номер телефона (в формате +7XXXXXXXXXX):")
+    user_states[message.from_user.id] = "auth_phone"
+
+
+async def handle_auth_phone(message: types.Message):
+    global _auth_client
+
+    phone = message.text.strip()
+    if not phone.startswith("+"):
+        await message.answer("Номер должен начинаться с +. Попробуйте снова:")
+        return
+
+    from telethon import TelegramClient
+    from telethon.sessions import StringSession
+
+    _auth_client = TelegramClient(StringSession(), API_ID, API_HASH)
+    await _auth_client.connect()
+
+    try:
+        await _auth_client.send_code_request(phone)
+        user_states[message.from_user.id] = "auth_code"
+        await message.answer(
+            "Код отправлен в Telegram. Введите код подтверждения:\n"
+            "(если код 12345, отправьте как 1 2 3 4 5 или 1-2-3-4-5 чтобы Telegram не заблокировал)"
+        )
+    except Exception as e:
+        await _auth_client.disconnect()
+        _auth_client = None
+        user_states.pop(message.from_user.id, None)
+        await message.answer(f"Ошибка отправки кода: {e}")
+
+
+async def handle_auth_code(message: types.Message):
+    global _auth_client
+
+    # Parse code — allow spaces, dashes
+    code = message.text.strip().replace(" ", "").replace("-", "")
+
+    try:
+        await _auth_client.sign_in(code=code)
+    except Exception as e:
+        err_name = type(e).__name__
+        if "SessionPasswordNeeded" in err_name:
+            user_states[message.from_user.id] = "auth_2fa"
+            await message.answer("Требуется пароль двухфакторной аутентификации. Введите пароль:")
+            return
+        await _auth_client.disconnect()
+        _auth_client = None
+        user_states.pop(message.from_user.id, None)
+        await message.answer(f"Ошибка авторизации: {e}")
+        return
+
+    await _finish_auth(message)
+
+
+async def handle_auth_2fa(message: types.Message):
+    global _auth_client
+
+    password = message.text.strip()
+
+    try:
+        await _auth_client.sign_in(password=password)
+    except Exception as e:
+        await _auth_client.disconnect()
+        _auth_client = None
+        user_states.pop(message.from_user.id, None)
+        await message.answer(f"Ошибка 2FA: {e}")
+        return
+
+    await _finish_auth(message)
+
+
+async def _finish_auth(message: types.Message):
+    global _auth_client
+
+    session_str = _auth_client.session.save()
+    await _auth_client.disconnect()
+    _auth_client = None
+    user_states.pop(message.from_user.id, None)
+
+    save_session(session_str)
+
+    ok = await init_buyer()
+    if ok:
+        await message.answer(
+            "Авторизация успешна! Бот готов к работе.\n"
+            "Используйте /start для открытия панели управления."
+        )
+    else:
+        await message.answer("Авторизация сохранена, но не удалось запустить покупатель. Перезапустите бот.")
 
 
 # ================== Status helpers ==================
 def read_status() -> dict:
-    return buyer.read_status()
+    if buyer:
+        return buyer.read_status()
+    try:
+        with open(STATUS_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
 
 def write_status(data: dict):
-    buyer.write_status(data)
+    if buyer:
+        buyer.write_status(data)
+        return
+    os.makedirs(os.path.dirname(STATUS_FILE), exist_ok=True)
+    tmp = STATUS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, STATUS_FILE)
 
 
 def ensure_status():
@@ -187,17 +325,20 @@ async def handle_settings_buttons(message: types.Message):
         status = read_status()
         is_active = status.get("isActive", False)
         distribution = status.get("distribution", "")
+        has_session = bool(load_session())
 
         balance = 0
-        if buyer._client and buyer._client.is_connected():
+        if buyer and buyer._client and buyer._client.is_connected():
             try:
                 from Message_Bot.telegram_api import get_stars_balance
                 balance = await get_stars_balance(buyer._client)
             except Exception:
                 pass
 
+        auth_line = "✅ авторизован" if has_session else "❌ не авторизован (/auth)"
         reply = (
             f"📈 Статус бота:\n"
+            f"• Сессия: {auth_line}\n"
             f"• Активен: {'✅' if is_active else '❌'}\n"
             f"• Баланс: {balance} ⭐\n"
             f"• Текущее распределение звезд:\n{distribution or '— не задано —'}"
@@ -206,6 +347,9 @@ async def handle_settings_buttons(message: types.Message):
         return True
 
     elif text == "💰 Начать 💰":
+        if not load_session():
+            await message.answer("❌ Сначала авторизуйтесь: /auth")
+            return True
         status = read_status()
         if not status.get("distribution"):
             await message.answer("❌ Сначала задайте распределение звёзд!")
@@ -261,6 +405,14 @@ async def controlUser(message: types.Message):
         return
 
     ensure_status()
+
+    if not load_session():
+        await message.answer(
+            "Бот запущен, но требуется авторизация Telegram-аккаунта.\n"
+            "Отправьте /auth для начала авторизации.",
+        )
+        return
+
     await message.answer(
         "🎛️ Перед тобой панель управления ботом\nВыбери нужный раздел: 👇",
         reply_markup=make_kb_grid_main(),
@@ -268,6 +420,13 @@ async def controlUser(message: types.Message):
 
 
 # ================== Predicates ==================
+def is_auth_state(message: types.Message) -> bool:
+    uid = message.from_user.id if message.from_user else None
+    if not uid:
+        return False
+    return user_states.get(uid, "").startswith("auth_")
+
+
 def awaiting_input_predicate(message: types.Message) -> bool:
     uid = message.from_user.id if message.from_user else None
     if not uid or uid not in user_states:
@@ -287,8 +446,23 @@ def is_settings_button_predicate(message: types.Message) -> bool:
     ]
 
 
+# ================== Auth state router ==================
+async def auth_router(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    state = user_states.get(message.from_user.id)
+    if state == "auth_phone":
+        await handle_auth_phone(message)
+    elif state == "auth_code":
+        await handle_auth_code(message)
+    elif state == "auth_2fa":
+        await handle_auth_2fa(message)
+
+
 # ================== Register handlers ==================
 dp.message.register(controlUser, Command(commands=["start"]))
+dp.message.register(cmd_auth, Command(commands=["auth"]))
+dp.message.register(auth_router, is_auth_state)
 dp.message.register(handle_back_button, is_back_button_predicate)
 dp.message.register(handle_text_after_buttons, awaiting_input_predicate)
 dp.message.register(handle_settings_buttons, is_settings_button_predicate)
@@ -298,17 +472,20 @@ dp.message.register(handle_settings_buttons, is_settings_button_predicate)
 async def main():
     ensure_status()
 
-    # Connect Telethon client for purchasing
-    await buyer.connect()
-
-    # Start UDP listener for receiving gifts from Backend
-    await udp.start()
+    session = load_session()
+    if session:
+        await init_buyer()
+        logger.info("Session found, buyer started")
+    else:
+        logger.info("No session — waiting for /auth from user")
 
     try:
         await dp.start_polling(bot)
     finally:
-        udp.stop()
-        await buyer.disconnect()
+        if udp:
+            udp.stop()
+        if buyer:
+            await buyer.disconnect()
 
 
 if __name__ == "__main__":

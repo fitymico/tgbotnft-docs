@@ -9,7 +9,6 @@ Self-Host версия работает на вашем сервере и пол
 - Linux (x86_64 или ARM64)
 - Подписка SELF-HOST (приобретается в Service-Bot)
 - Telegram Bot Token (от @BotFather)
-- Session String (получается при авторизации через Service-Bot)
 
 ## Быстрая установка
 
@@ -26,8 +25,10 @@ wget -qO- https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/mai
 Установщик автоматически:
 1. Определит дистрибутив и архитектуру
 2. Скачает бинарник
-3. Запросит конфигурацию (4 параметра)
+3. Запросит конфигурацию (3 параметра)
 4. Создаст и запустит systemd/OpenRC сервис
+
+После установки откройте бота в Telegram и отправьте `/auth` для авторизации Telegram-аккаунта.
 
 ## Ручная установка
 
@@ -51,7 +52,6 @@ sudo cat > /opt/nft-gift-bot/.env << 'EOF'
 BOT_TOKEN=123456789:AABBCC...
 ADMIN_ID=123456789
 LICENSE_KEY=ваш-лицензионный-ключ
-SESSION_STRING=ваша-session-string
 EOF
 
 sudo chmod 600 /opt/nft-gift-bot/.env
@@ -97,7 +97,18 @@ sudo systemctl start nft-gift-bot
 | `BOT_TOKEN` | Токен Telegram-бота от @BotFather |
 | `ADMIN_ID` | Ваш Telegram ID (числовой) |
 | `LICENSE_KEY` | Лицензионный ключ SELF-HOST подписки |
-| `SESSION_STRING` | Строка сессии Telethon (из Service-Bot) |
+
+## Авторизация Telegram-аккаунта
+
+После установки и запуска бота:
+
+1. Откройте бота в Telegram
+2. Отправьте команду `/auth`
+3. Введите номер телефона (в формате +7XXXXXXXXXX)
+4. Введите код подтверждения из Telegram (через пробелы или дефисы: `1 2 3 4 5`)
+5. Если включена двухфакторная аутентификация — введите пароль
+
+Сессия сохраняется локально. Повторная авторизация не требуется после перезапуска.
 
 ## Управление
 
