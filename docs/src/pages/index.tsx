@@ -46,7 +46,7 @@ function HomepageHeader() {
             </Link>
             <Link
               className={styles.secondaryButton}
-              to="/docs/intro">
+              to="/">
               Установка
             </Link>
           </div>
