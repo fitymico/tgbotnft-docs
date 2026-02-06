@@ -4,6 +4,11 @@
 
 /* Tokyo Night Day (Light mode) */
 :root {
+  /* Montserrat Alternates font */
+  --ifm-font-family-base: 'Montserrat Alternates', system-ui, -apple-system, sans-serif;
+  --ifm-heading-font-family: 'Montserrat Alternates', system-ui, -apple-system, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', 'Fira Code', monospace;
+
   --ifm-color-primary: #2e7de9;
   --ifm-color-primary-dark: #2670d4;
   --ifm-color-primary-darker: #2468c8;
