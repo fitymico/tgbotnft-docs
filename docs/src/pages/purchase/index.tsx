@@ -1,7 +1,7 @@
 import React, { useState, type ReactNode } from 'react';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
-import { HiCheck, HiStar } from 'react-icons/hi2';
+import { HiCheck, HiStar, HiXMark } from 'react-icons/hi2';
 import { SiBoosty } from 'react-icons/si';
 import StarField from '@site/src/components/StarField';
 
@@ -60,12 +60,20 @@ function PricingCard({ title, price, period, features, popular, boostyLink, tgSt
                 <span className={styles.pricePeriod}>/ {period}</span>
             </div>
             <ul className={styles.features}>
-                {features.map((feature, index) => (
-                    <li key={index} className={styles.feature}>
-                        <HiCheck className={styles.checkIcon} />
-                        {feature}
-                    </li>
-                ))}
+                {features.map((feature, index) => {
+                    const isNegative = feature.startsWith('!');
+                    const text = isNegative ? feature.slice(1) : feature;
+                    return (
+                        <li key={index} className={styles.feature}>
+                            {isNegative ? (
+                                <HiXMark className={styles.crossIcon} />
+                            ) : (
+                                <HiCheck className={styles.checkIcon} />
+                            )}
+                            {text}
+                        </li>
+                    );
+                })}
             </ul>
             <div className={styles.buyButtons}>
                 <a href={boostyLink} className={styles.buyButton}>
@@ -124,6 +132,7 @@ const PLANS: Plan[] = [
             tgStarsLink: 'https://t.me/dimopster?start=selfhost_yearly',
         },
         features: [
+            '!Требуется свой сервер (VPS)',
             'Полный доступ к боту',
             'Автоматическая покупка NFT',
             'Отслеживание подарков',
@@ -151,30 +160,6 @@ const PLANS: Plan[] = [
             'Telegram поддержка',
             'Развёртывание "под ключ"',
             'Защищенный сервер',
-        ],
-        popular: true,
-    },
-    {
-        title: 'HOSTING PRO',
-        monthly: {
-            price: '449₽',
-            period: 'месяц',
-            boostyLink: 'https://boosty.to/dimopster/purchase/5',
-            tgStarsLink: 'https://t.me/dimopster?start=hostingpro_monthly',
-        },
-        yearly: {
-            price: '4490₽',
-            period: 'год',
-            boostyLink: 'https://boosty.to/dimopster/purchase/6',
-            tgStarsLink: 'https://t.me/dimopster?start=hostingpro_yearly',
-        },
-        features: [
-            'Полный доступ к боту',
-            'Автоматическая покупка NFT',
-            'Отслеживание подарков',
-            'Приоритетная поддержка',
-            'Развёртывание "под ключ"',
-            'Отдельный защищенный сервер',
         ],
     },
 ];

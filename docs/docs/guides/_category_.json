@@ -1,0 +1,8 @@
+{
+  "label": "Руководства",
+  "position": 3,
+  "link": {
+    "type": "generated-index",
+    "description": "Подробные руководства по использованию бота"
+  }
+}

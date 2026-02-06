@@ -204,6 +204,31 @@
   background: #7aa2f7;
 }
 
+/* Admonitions - lighter tip color */
+:root {
+  --ifm-color-success: #4ade80;
+  --ifm-color-success-dark: #22c55e;
+  --ifm-color-success-darker: #16a34a;
+  --ifm-color-success-darkest: #15803d;
+  --ifm-color-success-light: #86efac;
+  --ifm-color-success-lighter: #bbf7d0;
+  --ifm-color-success-lightest: #dcfce7;
+  --ifm-color-success-contrast-background: #f0fdf4;
+  --ifm-color-success-contrast-foreground: #166534;
+}
+
+[data-theme='dark'] {
+  --ifm-color-success: #86efac;
+  --ifm-color-success-dark: #4ade80;
+  --ifm-color-success-darker: #22c55e;
+  --ifm-color-success-darkest: #16a34a;
+  --ifm-color-success-light: #bbf7d0;
+  --ifm-color-success-lighter: #dcfce7;
+  --ifm-color-success-lightest: #f0fdf4;
+  --ifm-color-success-contrast-background: #14532d;
+  --ifm-color-success-contrast-foreground: #dcfce7;
+}
+
 /* Homepage - no scroll */
 html:has(.homepage-wrapper),
 body:has(.homepage-wrapper) {

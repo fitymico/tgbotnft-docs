@@ -1,35 +1,52 @@
 ---
 sidebar_position: 1
+slug: /
 ---
 
-# Telegram Bot NFT - Documentation
+# nftbot
 
-Repository for [Telegram Bot NFT](https://github.com/pluttan/Telegram-Bot-NFT) documentation.
+**Автоматическая покупка NFT-подарков в Telegram**
 
-Website: https://pluttan.github.io/Telegram-Bot-NFT-docs/
+nftbot — это система автоматического мониторинга и покупки NFT-подарков (Gift NFT) в Telegram. Бот сканирует появление новых подарков в реальном времени и мгновенно выкупает их согласно вашим правилам распределения звёзд.
 
-## Installation
+## Возможности
 
-```bash
-npm install
+- **Автоматическое сканирование** — мониторинг новых подарков 24/7 в реальном времени
+- **Мгновенная покупка** — автоматический выкуп сразу после появления подарка
+- **Гибкие правила** — настройка распределения звёзд по цене подарков
+- **Service Bot** — удобное управление через Telegram без командной строки
+- **Три тарифных плана** — от self-hosted до выделенного VPS
+
+## Как это работает
+
+```mermaid
+graph LR
+    A[Новый подарок в Telegram] --> B[Backend сканирует]
+    B --> C[UDP уведомление]
+    C --> D[Ваш бот получает]
+    D --> E[Автопокупка по правилам]
 ```
 
-## Local Development
+1. **Backend** непрерывно сканирует Telegram на появление новых подарков
+2. При обнаружении нового подарка отправляется **UDP-уведомление** всем подключённым клиентам
+3. **Ваш бот** получает уведомление и проверяет подарок по вашим правилам
+4. Если подарок подходит под правила — происходит **мгновенная покупка**
 
-```bash
-npm start
-```
+## Начало работы
 
-This command starts a local development server and opens up a browser window. Most changes are reflected live without having to restart the server.
+Самый быстрый способ начать — использовать наш [Service Bot](https://t.me/l_servicebot) в Telegram:
 
-## Build
+1. Перейдите к [@l_servicebot](https://t.me/l_servicebot)
+2. Нажмите **Старт**
+3. Выберите тарифный план
+4. Оплатите звёздами Telegram
+5. Следуйте инструкциям по настройке
 
-```bash
-npm run build
-```
+Подробнее о каждом шаге читайте в разделе [Быстрый старт](./getting-started/quick-start.md).
 
-This command generates static content into the `build` directory.
+## Поддержка
 
-## Deployment
+Если у вас возникли вопросы или проблемы:
 
-This repository is configured to automatically deploy to GitHub Pages via GitHub Actions when pushing to `main`.
+- **Telegram**: [@l_servicebot](https://t.me/l_servicebot) — напишите администратору через меню бота
+- **GitHub**: [Создать Issue](https://github.com/fitymico/tgbotnft/issues)

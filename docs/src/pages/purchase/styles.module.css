@@ -141,6 +141,8 @@
     min-width: 320px;
     max-width: 400px;
     flex: 1;
+    display: flex;
+    flex-direction: column;
 }
 
 [data-theme='light'] .card {
@@ -226,6 +228,7 @@
     list-style: none;
     padding: 0;
     margin: 0 0 2rem 0;
+    flex: 1;
 }
 
 .feature {
@@ -254,6 +257,16 @@
 
 [data-theme='light'] .checkIcon {
     color: #587539;
+}
+
+.crossIcon {
+    color: #f7768e;
+    font-size: 1.2rem;
+    flex-shrink: 0;
+}
+
+[data-theme='light'] .crossIcon {
+    color: #f52a65;
 }
 
 .buyButtons {

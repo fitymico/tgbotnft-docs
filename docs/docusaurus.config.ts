@@ -11,10 +11,10 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://seventyzero.github.io',
+  url: 'https://fitymico.github.io',
   baseUrl: '/tgbotnft-docs/',
 
-  organizationName: 'seventyzero',
+  organizationName: 'fitymico',
   projectName: 'tgbotnft-docs',
   trailingSlash: false,
 
@@ -25,13 +25,20 @@ const config: Config = {
     locales: ['ru'],
   },
 
+  markdown: {
+    mermaid: true,
+  },
+
+  themes: ['@docusaurus/theme-mermaid'],
+
   presets: [
     [
       'classic',
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/seventyzero/tgbotnft-docs/tree/main/',
+          editUrl: 'https://github.com/fitymico/tgbotnft-docs/tree/main/',
+          routeBasePath: '/',
         },
         blog: false,
         theme: {
@@ -60,13 +67,12 @@ const config: Config = {
           position: 'left',
         },
         {
-          type: 'docSidebar',
-          sidebarId: 'tutorialSidebar',
-          position: 'left',
+          to: '/getting-started/quick-start',
           label: 'Установка',
+          position: 'left',
         },
         {
-          href: 'https://github.com/seventyzero/tgbotnft',
+          href: 'https://github.com/fitymico/tgbotnft',
           label: 'GitHub',
           position: 'right',
         },

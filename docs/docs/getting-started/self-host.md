@@ -1,5 +1,5 @@
 ---
-sidebar_position: 6
+sidebar_position: 3
 ---
 
 # SELF-HOST: установка на своём сервере
@@ -17,7 +17,7 @@ sidebar_position: 6
 После оплаты тарифа SELF-HOST в Service Bot нажмите **"Показать лицензионный ключ"**. Ключ имеет формат:
 
 ```
-SB-XXXXXXXXXXXXXXXX
+SB-123456789-A1B2C3D4
 ```
 
 Сохраните его — он понадобится для настройки.
@@ -31,7 +31,7 @@ SB-XXXXXXXXXXXXXXXX
 Подключитесь к серверу и выполните:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/fitymico/nft-gift-bot-release/main/install.sh | sudo bash
 ```
 
 Установщик автоматически:
@@ -45,8 +45,7 @@ curl -fsSL https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/ma
 | # | Параметр | Где получить |
 |---|----------|-------------|
 | 1 | BOT_TOKEN | @BotFather |
-| 2 | ADMIN_ID | @userinfobot |
-| 3 | LICENSE_KEY | Service-Bot (после оплаты) |
+| 2 | LICENSE_KEY | Service-Bot (после оплаты) |
 
 ## Шаг 4. Авторизация Telegram-аккаунта
 
@@ -54,76 +53,10 @@ curl -fsSL https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/ma
 
 1. Откройте бота в Telegram и отправьте `/start`
 2. Бот предложит пройти авторизацию — отправьте `/auth`
-3. Введите номер телефона (в формате `+7XXXXXXXXXX`)
-4. Введите код подтверждения из Telegram (через пробелы или дефисы: `1 2 3 4 5`)
-5. Если включена двухфакторная аутентификация — введите пароль
+3. Бот отправит **ссылку на страницу авторизации**
+4. Перейдите по ссылке и пройдите авторизацию (по QR-коду или номеру телефона)
 
 После успешной авторизации бот сохранит сессию локально. Повторная авторизация не потребуется после перезапуска.
-
-:::tip
-Код подтверждения рекомендуется вводить через пробелы или дефисы (например, `1 2 3 4 5` вместо `12345`), чтобы Telegram не заблокировал сообщение с кодом.
-:::
-
-## Шаг 3 (альтернатива). Ручная установка
-
-### 3a.1. Скачайте бинарник
-
-```bash
-sudo mkdir -p /opt/nft-gift-bot
-sudo curl -fsSL https://github.com/seventyzero/nft-gift-bot-release/raw/main/nft-gift-bot-linux-amd64 \
-    -o /opt/nft-gift-bot/nft-gift-bot
-sudo chmod +x /opt/nft-gift-bot/nft-gift-bot
-```
-
-Для ARM64 (Raspberry Pi 4, Oracle Cloud) замените `amd64` на `arm64`.
-
-### 3a.2. Создайте конфигурацию
-
-```bash
-sudo nano /opt/nft-gift-bot/.env
-```
-
-Содержимое:
-
-```env
-BOT_TOKEN=123456789:AABBCC...
-ADMIN_ID=123456789
-LICENSE_KEY=SB-XXXXXXXXXXXXXXXX
-```
-
-```bash
-sudo chmod 600 /opt/nft-gift-bot/.env
-sudo mkdir -p /opt/nft-gift-bot/data
-```
-
-### 3a.3. Создайте systemd-сервис
-
-```bash
-sudo cat > /etc/systemd/system/nft-gift-bot.service << 'EOF'
-[Unit]
-Description=NFT Gift Bot
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/nft-gift-bot
-EnvironmentFile=/opt/nft-gift-bot/.env
-ExecStart=/opt/nft-gift-bot/nft-gift-bot
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable nft-gift-bot
-sudo systemctl start nft-gift-bot
-```
-
----
 
 ## Управление ботом
 
@@ -139,7 +72,7 @@ sudo systemctl start nft-gift-bot
 Повторно запустите установщик:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/fitymico/nft-gift-bot-release/main/install.sh | sudo bash
 ```
 
 Существующая конфигурация `.env` сохранится — установщик подставит текущие значения как умолчания.
@@ -148,7 +81,7 @@ curl -fsSL https://raw.githubusercontent.com/seventyzero/nft-gift-bot-release/ma
 
 ```bash
 sudo systemctl stop nft-gift-bot
-sudo curl -fsSL https://github.com/seventyzero/nft-gift-bot-release/raw/main/nft-gift-bot-linux-amd64 \
+sudo curl -fsSL https://github.com/fitymico/nft-gift-bot-release/raw/main/nft-gift-bot-linux-amd64 \
     -o /opt/nft-gift-bot/nft-gift-bot
 sudo chmod +x /opt/nft-gift-bot/nft-gift-bot
 sudo systemctl start nft-gift-bot
@@ -176,3 +109,5 @@ sudo bash /opt/nft-gift-bot/uninstall.sh
 | Arch Linux | rolling | systemd |
 | Alpine | 3.17+ | OpenRC |
 | openSUSE | Leap 15.4+ | systemd |
+
+---
